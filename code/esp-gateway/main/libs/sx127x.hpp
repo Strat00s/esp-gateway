@@ -273,6 +273,7 @@ public:
     uint8_t getModemMode();
 
     //DONE ???
+    //TODO description
     /** @brief Set the frequency hopping period
      * @attention Hopping period (time between channel change) is then defined as Ts*frequency hopping period. Ts = symbol period
      * @param period period in ms in which to change the 
@@ -280,32 +281,42 @@ public:
     void setFrequencyHopping(uint8_t period);
 
     //DONE
-    /** @brief Set the sync word
+    /** @brief Set the sync word for keeping modules on different "networks"
      * 
-     * @param sync_word sync word for keeping modules on different "networks"
+     * @param sync_word desired sync word. Can be anything. 0x12/0x1424 is default. 0x34/0x3444 is reserved for LoRaWAN.
      */
     void setSyncWord(uint8_t sync_word);
 
     //TODO
-    /** @brief Set the Current Limit object
+    /** @brief Set the current limit of the module
      * 
      */
     void setCurrentLimit();
 
     //DONE
     //TODO FSK
-    /** @brief Set the preamble length
+    /** @brief Set the preamble length used to syncrhonize receiver with the incoming data
      * 
-     * @param preamble_length 
-     * @return 1 if invalid preamble length given //TODO return types
+     * @param preamble_length preamble length between 6 and 65535
+     * @return 0 on success. ERR_INVALID_PREAMBLE_LEN if preamble length is less than 6.
      */
     uint8_t setPreambleLength(uint16_t preamble_length);
 
     //DONE
     /** @brief Set bandwidth. If needed, enable/disable low data rate optimalization
      * 
-     * @param bandwidth LORA_BANDWIDTH_... macros
-     * @return //TODO if invalid bandwidth is provided
+     * @param bandwidth desired bandwidth
+     * @param LORA_BANDWIDTH_7_8kHz
+     * @param LORA_BANDWIDTH_10_4kHz
+     * @param LORA_BANDWIDTH_15_6kHz
+     * @param LORA_BANDWIDTH_20_8kHz
+     * @param LORA_BANDWIDTH_31_25kHz
+     * @param LORA_BANDWIDTH_41_7kHz
+     * @param LORA_BANDWIDTH_62_5kHz
+     * @param LORA_BANDWIDTH_125kHz
+     * @param LORA_BANDWIDTH_250kHz
+     * @param LORA_BANDWIDTH_500kHz
+     * @return 0 on success. ERR_INVALID_MODEM_MODE if not in LoRa mode. ERR_INVALID_BANDWIDTH if invalid bandwidth is provided.
      */
     uint8_t setBandwidth(uint8_t bandwidth);
     
@@ -319,8 +330,15 @@ public:
     //DONE
     /** @brief Set spreading factor. If needed, enable/disable low data rate optimalization
      * 
-     * @param spreading_factor LORA_SPREADING_FACTOR_... macros
-     * @return TODO if invalid bandwidth is provided
+     * @param spreading_factor desired spreading factor
+     * @param LORA_SPREADING_FACTOR_6 
+     * @param LORA_SPREADING_FACTOR_7 
+     * @param LORA_SPREADING_FACTOR_8 
+     * @param LORA_SPREADING_FACTOR_9 
+     * @param LORA_SPREADING_FACTOR_10
+     * @param LORA_SPREADING_FACTOR_11
+     * @param LORA_SPREADING_FACTOR_12
+     * @return 0 on success. ERR_INVALID_MODEM_MODE if not in LoRa mode. ERR_INVALID_SPREADING_FACTOR if invalid spreading factor is provided.
      */
     uint8_t setSpreadingFactor(uint8_t spreading_factor);
 
@@ -328,16 +346,30 @@ public:
     /** @brief Set the module radio frequency
      * 
      * @param frequency Frequency in MHz
+     * @return 0 on success, ERR_INVALID_FREQUENCY if invalid frequency is provided for current module version
      */
     uint8_t setFrequency(uint16_t frequency);
 
     //DONE
+    /** @brief Set the coding rate
+     * 
+     * @param coding_rate desired coding rate
+     * @param LORA_CODING_RATE_4_5
+     * @param LORA_CODING_RATE_4_6
+     * @param LORA_CODING_RATE_4_7
+     * @param LORA_CODING_RATE_4_8
+     * @return 0 on success. ERR_INVALID_MODEM_MODE if not in LoRa mode. ERR_INVALID_CODING_RATE if invalid coding rate is provided.
+     */
     uint8_t setCodingRate(uint8_t coding_rate);
 
     //TODO
-    void setGain();
+    uint8_t setGain(uint8_t gain);
 
     //DONE
+    /** @brief Enable or disable CRC 
+     * 
+     * @param enable 
+     */
     void setCRC(bool enable);
 
 

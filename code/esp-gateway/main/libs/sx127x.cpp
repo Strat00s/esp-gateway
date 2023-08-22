@@ -192,7 +192,7 @@ void SX127X::setSyncWord(uint8_t sync_word) {
 //TODO FSK has different register
 uint8_t SX127X::setPreambleLength(uint16_t preamble_len) {
     if (preamble_len < 6)
-        return ERR_PREAMBLE_LEN;   //TODO return values
+        return ERR_INVALID_PREAMBLE_LEN;   //TODO return values
     writeRegister(REG_PREAMBLE_MSB, (uint8_t)((preamble_len >> 8) & 0xFF));
     writeRegister(REG_PREAMBLE_LSB, (uint8_t)(preamble_len & 0xFF));
     return 0;
@@ -297,6 +297,10 @@ uint8_t SX127X::setCodingRate(uint8_t coding_rate) {
     return 0;
 }
 
+uint8_t SX127X::setGain(uint8_t gain) {
+
+}
+
 void SX127X::setCRC(bool enable) {
     //TODO FSK
     if (getModemMode() != SX127X_MODEM_LORA)
@@ -315,6 +319,9 @@ void SX127X::setLowDataRateOptimalization() {
     else
         setRegister(REG_MODEM_CONFIG_3, LORA_LOW_DATA_RATE_OPT_OFF, 3, 3);
 }
+
+
+
 
 
 
