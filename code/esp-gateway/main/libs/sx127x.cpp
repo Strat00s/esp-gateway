@@ -1,7 +1,7 @@
 /**
  * @file SX127X.cpp
  * @author Lukáš Baštýř (l.bastyr@seznam.cz)
- * @brief SX1278 library
+ * @brief SX127X library
  * @version 0.1
  * @date 24-06-2023
  * 
@@ -92,12 +92,12 @@ uint8_t SX127X::begin(uint32_t frequency, uint8_t sync_word, uint16_t preamble_l
     uint8_t cr   = 7U;
 
     //go to standby to change settings and set default settings
-    setMode(SX1278_STANDBY);
+    setMode(SX127X_OP_MODE_STANDBY);
 
     //set lora mode
     //TODO check reg value for other chips
     //TODO implement FSK
-    setModemMode(SX1278_LORA);
+    setModemMode(SX127X_MODEM_LORA);
 
     //set default settings
     //turn off frequency hopping
@@ -134,7 +134,7 @@ uint8_t SX127X::begin(uint32_t frequency, uint8_t sync_word, uint16_t preamble_l
 
     //module I have does not have RFO pin connected
     //so let's just enable PA_BOOST and set lowest possible power
-    writeRegister(REG_PA_CONFIG, SX1278_PA_SELECT_BOOST);
+    writeRegister(REG_PA_CONFIG, SX127X_PA_SELECT_BOOST);
 
     //enable automatic gain control
     setRegister(REG_MODEM_CONFIG_3, LORA_AGC_AUTO_ON, 2, 2);
@@ -159,8 +159,8 @@ void SX127X::reset() {
 }
 
 uint8_t SX127X::getVersion() {
-    reset();
-    delay(10);
+    //reset();
+    //delay(10);
     return readRegister(REG_VERSION);
 }
 
@@ -169,19 +169,22 @@ void SX127X::setMode(uint8_t mode) {
 }
 
 void SX127X::setModemMode(uint8_t modem) {
-    setMode(SX1278_SLEEP);
+    setMode(SX127X_OP_MODE_SLEEP);
 
     setRegister(REG_OP_MODE, modem, 7, 7);
 
-    setMode(SX1278_STANDBY);
+    setMode(SX127X_OP_MODE_STANDBY);
 }
 
-//TODO
+uint8_t SX127X::getModemMode() {
+    //TODO masking
+    return readRegister(REG_OP_MODE);
+}
+
 void SX127X::setFrequencyHopping(uint8_t period) {
     writeRegister(REG_HOP_PERIOD, HOP_PERIOD_OFF);
 }
 
-//TODO 
 void SX127X::setSyncWord(uint8_t sync_word) {
     writeRegister(REG_SYNC_WORD, sync_word);
 }
@@ -189,12 +192,17 @@ void SX127X::setSyncWord(uint8_t sync_word) {
 //TODO FSK has different register
 uint8_t SX127X::setPreambleLength(uint16_t preamble_len) {
     if (preamble_len < 6)
-        return 1;
+        return ERR_PREAMBLE_LEN;   //TODO return values
     writeRegister(REG_PREAMBLE_MSB, (uint8_t)((preamble_len >> 8) & 0xFF));
     writeRegister(REG_PREAMBLE_LSB, (uint8_t)(preamble_len & 0xFF));
+    return 0;
 }
 
 uint8_t SX127X::setBandwidth(uint8_t bandwidth) {
+    //TODO check modem type
+    if (getModemMode() != SX127X_MODEM_LORA)
+        return ERR_INVALID_MODEM_MODE;
+
     switch (bandwidth) {
         case LORA_BANDWIDTH_7_8kHz   : this->bw =   7.8;  break;
         case LORA_BANDWIDTH_10_4kHz  : this->bw =  10.4;  break;
@@ -206,23 +214,25 @@ uint8_t SX127X::setBandwidth(uint8_t bandwidth) {
         case LORA_BANDWIDTH_125kHz   : this->bw = 125.0;  break;
         case LORA_BANDWIDTH_250kHz   : this->bw = 250.0;  break;
         case LORA_BANDWIDTH_500kHz   : this->bw = 500.0;  break;
-        default: return 1;  //TODO return types
+        default: return ERR_INVALID_BANDWIDTH;  //TODO return types
     }
 
     setRegister(REG_MODEM_CONFIG_1, bandwidth, 4, 7);
-    setLowDataOptimalization();
+
+    //check and enable/disable LDRO
+    setLowDataRateOptimalization();
+    return 0;
 }
 
 //TODO read it from register or store it?
-/** @brief 
- * 
- * @return uint32_t bandwidth in Hz
- */
 uint32_t SX127X::getBandwidth() {
     return uint32_t(bw * 1000);
 }
 
 uint8_t SX127X::setSpreadingFactor(uint8_t spreading_factor) {
+    if (getModemMode() != SX127X_MODEM_LORA)
+        return ERR_INVALID_MODEM_MODE;
+
     switch (spreading_factor) {
         case LORA_SPREADING_FACTOR_6  :
         case LORA_SPREADING_FACTOR_7  :
@@ -231,27 +241,75 @@ uint8_t SX127X::setSpreadingFactor(uint8_t spreading_factor) {
         case LORA_SPREADING_FACTOR_10 :
         case LORA_SPREADING_FACTOR_11 :
         case LORA_SPREADING_FACTOR_12 : break;
-        default: return 1;  //TODO return types
+        default: return ERR_INVALID_SPREADING_FACTOR;  //TODO return types
+    }
+
+    setRegister(REG_MODEM_CONFIG_2, spreading_factor, 4, 7);
+    //special configuration for spreading factor 6
+    if (spreading_factor == LORA_SPREADING_FACTOR_6) {
+        setRegister(REG_MODEM_CONFIG_1, LORA_IMPLICIT_HEADER, 0, 0);
+        setRegister(REG_DETECT_OPTIMIZE, LORA_DETECTION_OPTIMIZE_SF6, 0, 2);
+        setRegister(REG_DETECTION_THRESHOLD, LORA_DETECTION_THRESHOLD_SF6);
+    }
+    //default everything when sf != 6
+    else {
+        setRegister(REG_MODEM_CONFIG_1, LORA_EXPLICIT_HEADER, 0, 0);
+        setRegister(REG_DETECT_OPTIMIZE, LORA_DETECTION_OPTIMIZE_SF7_12, 0, 2);
+        setRegister(REG_DETECTION_THRESHOLD, LORA_DETECTION_THRESHOLD_SF7_12);
     }
 
     this->sf = spreading_factor >> 4;
 
-    setRegister(REG_MODEM_CONFIG_2, this->sf, 4, 7);
-    setLowDataOptimalization();
+    //check and enable/disable LDRO
+    setLowDataRateOptimalization();
+    return 0;
 }
 
-void SX127X::setFrequency(uint32_t frequency) {
-    uint32_t FRF = (frequency * (uint32_t(1) << 19)) / 32.0;
-    setRegister(REG_FRF_MSB, (FRF & 0xFF0000) >> 16);
-    setRegister(REG_FRF_MID, (FRF & 0x00FF00) >> 8);
-    setRegister(REG_FRF_LSB, FRF & 0x0000FF);
+uint8_t SX127X::setFrequency(uint16_t frequency) {
+    //TODO check frequency range based on selected module
+
+    //go to standby first
+    setMode(SX127X_OP_MODE_STANDBY);
+
+    //calculate new frequency reg value and set it
+    uint32_t f_rf = frequency * ((uint32_t(1) << 19) / 32);
+    setRegister(REG_FRF_MSB, f_rf >> 16);
+    setRegister(REG_FRF_MID, f_rf >> 8);
+    setRegister(REG_FRF_LSB, f_rf);
+
+    return 0;
 }
 
-/** @brief Set low data rate optimalization on if time on air is more than 16ms
- * 
- */
-void SX127X::setLowDataOptimalization() {
-    this->ts = (float(uint16_t(1) << this->sf) / this->bw);
+uint8_t SX127X::setCodingRate(uint8_t coding_rate) {
+    if (getModemMode() != SX127X_MODEM_LORA)
+        return ERR_INVALID_MODEM_MODE;
+
+    switch(coding_rate) {
+        case LORA_CODING_RATE_4_5:
+        case LORA_CODING_RATE_4_6:
+        case LORA_CODING_RATE_4_7:
+        case LORA_CODING_RATE_4_8: break;
+        default: return ERR_INVALID_CODING_RATE;
+    }
+
+    this->cr = (coding_rate + 0b00001000) >> 1;
+    setRegister(REG_MODEM_CONFIG_1, coding_rate, 1, 3);
+    return 0;
+}
+
+void SX127X::setCRC(bool enable) {
+    //TODO FSK
+    if (getModemMode() != SX127X_MODEM_LORA)
+        return;
+    
+    if(enable)
+        setRegister(REG_MODEM_CONFIG_2, LORA_RX_PAYLOAD_CRC_ON, 2, 2);
+    else
+        setRegister(REG_MODEM_CONFIG_2, LORA_RX_PAYLOAD_CRC_OFF, 2, 2);
+}
+
+void SX127X::setLowDataRateOptimalization() {
+    this->ts = float(uint16_t(1) << this->sf) / this->bw;
     if(this->ts >= 16.0)
         setRegister(REG_MODEM_CONFIG_3, LORA_LOW_DATA_RATE_OPT_ON, 3, 3);
     else
@@ -270,7 +328,7 @@ uint8_t SX127X::readRegister(uint8_t addr) {
 }
 
 void SX127X::writeRegister(uint8_t addr, uint8_t data) {
-    addr |= SX1278_WRITE;
+    addr |= SX127X_WRITE;
     pinWrite(this->cs, low);
     spiTransfer(&addr, &data, 1);
     pinWrite(this->cs, high);
@@ -288,7 +346,7 @@ void SX127X::setRegister(uint8_t addr, uint8_t data, uint8_t mask_lsb, uint8_t m
 }
 
 uint8_t SX127X::transmit(uint8_t *data, uint8_t length) {
-    setMode(SX1278_STANDBY);
+    setMode(SX127X_OP_MODE_STANDBY);
 
     //set IO mapping for dio0 to be end of transmission
     setRegister(REG_DIO_MAPPING_1, DIO0_LORA_TX_DONE, 6, 7);
@@ -305,14 +363,14 @@ uint8_t SX127X::transmit(uint8_t *data, uint8_t length) {
 
     //write data to FIFO
     //pinWrite(this->cs, LOW);
-    //this->spi->writeRegisterBurst(REG_FIFO, data, length, SX1278_WRITE);
+    //this->spi->writeRegisterBurst(REG_FIFO, data, length, SX127X_WRITE);
     //pinWrite(this->cs, HIGH);
 
     //start transmission
-    setMode(SX1278_TX);
+    setMode(SX127X_TX);
     //while(!digitalRead(this->dio0));    //sometimes not enough
     while(!(readRegister(REG_IRQ_FLAGS) & 0b00001000));
-    setMode(SX1278_STANDBY);
+    setMode(SX127X_STANDBY);
 
     //read and clear interrupts
     uint8_t reg = readRegister(REG_IRQ_FLAGS);
