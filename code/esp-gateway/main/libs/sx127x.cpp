@@ -23,32 +23,32 @@ SX127X::~SX127X() {
 
 
 void SX127X::registerPinMode(void (*func)(uint8_t, uint8_t), uint8_t input, uint8_t output) {
-    this->pinMode = func;
-    this->input = input;
-    this->output = output;
+    this->pinMode      = func;
+    this->input        = input;
+    this->output       = output;
     this->has_pin_mode = true;
 }
 void SX127X::registerPinWrite(void (*func)(uint8_t, uint8_t), uint8_t high, uint8_t low) {
-    this->pinWrite = func;
-    this->high = high;
-    this->low = low;
+    this->pinWrite      = func;
+    this->high          = high;
+    this->low           = low;
     this->has_pin_write = true;
 }
 void SX127X::registerDelay(void (*func)(uint32_t)) {
-    this->delay = func;
+    this->delay     = func;
     this->has_delay = true;
 }
 
-void SX127X::startSpiTransfer(void (*func)()) {
-    this->startTransfer = func;
-    this->has_start = true;
+void SX127X::registerSPIStartTransaction(void (*func)()) {
+    this->SPIStartTransaction = func;
+    this->has_spi_start_tr     = true;
 }
-void SX127X::endSpiTransfer(void (*func)()) {
-    this->endTransfer = func;
-    this->has_end = true;
+void SX127X::registerSPIEndTransaction(void (*func)()) {
+    this->SPIEndTransaction = func;
+    this->has_spi_end_tr     = true;
 }
-void SX127X::registerSpiTransfer(uint8_t (*func)(uint8_t*, uint8_t*, uint8_t)) {
-    this->spiTransfer = func;
+void SX127X::registerSpiTransfer(uint8_t (*func)(uint8_t)) {
+    this->spiTransfer  = func;
     this->has_transfer = true;
 }
 
@@ -62,7 +62,7 @@ void SX127X::registerSpiTransfer(uint8_t (*func)(uint8_t*, uint8_t*, uint8_t)) {
 //gain: automatic
 //frequency hopping: off
 //TODO FSK
-uint8_t SX127X::begin(uint32_t frequency, uint8_t sync_word, uint16_t preamble_len) {
+uint8_t SX127X::begin(uint16_t frequency, uint8_t sync_word, uint16_t preamble_len) {
     //toggle pin modes if it was setup
     if (has_pin_mode) {
         pinMode(cs, output);
@@ -323,22 +323,34 @@ void SX127X::setLowDataRateOptimalization() {
 
 
 
+void SX127X::spiMakeTransaction(uint8_t addr, uint8_t *data, size_t length) {
+    if (this->has_spi_start_tr)
+        this->SPIStartTransaction();
 
+    pinMode(this->cs, this->low);
+    this->spiTransfer(addr);
+    for (size_t i = 0; i < length; i++) {
+        if (addr & SX127X_WRITE_MASK)
+            this->spiTransfer(data[i]);
+        else
+            data[i] = this->spiTransfer(0);
+    }
+    pinMode(this->cs, this->high);
 
-uint8_t SX127X::readRegister(uint8_t addr) {
-    addr &= ~(1 << 7);
+    if (this->has_spi_end_tr)
+        this->SPIEndTransaction();
+}
+
+uint8_t SX127X::readRegister(uint8_t addr, uint8_t mask_lsb = 0, uint8_t mask_msb = 7) {
+    addr &= SX127X_READ_MASK;
     uint8_t reg;
-    pinWrite(this->cs, low);
-    spiTransfer(&addr, &reg, 1);
-    pinWrite(this->cs, high);
+    spiMakeTransaction(addr, &reg);
     return reg;
 }
 
 void SX127X::writeRegister(uint8_t addr, uint8_t data) {
-    addr |= SX127X_WRITE;
-    pinWrite(this->cs, low);
-    spiTransfer(&addr, &data, 1);
-    pinWrite(this->cs, high);
+    addr |= SX127X_WRITE_MASK;
+    spiMakeTransaction(addr, &data);
 }
 
 void SX127X::setRegister(uint8_t addr, uint8_t data, uint8_t mask_lsb, uint8_t mask_msb) {
@@ -347,9 +359,7 @@ void SX127X::setRegister(uint8_t addr, uint8_t data, uint8_t mask_lsb, uint8_t m
     uint8_t mask = ~(0xFF >> (8 - mask_lsb) | 0xFF << (mask_msb + 1));
     data = (reg & ~mask) | (data & mask);
 
-    pinWrite(this->cs, low);
     writeRegister(addr, data);
-    pinWrite(this->cs, high);
 }
 
 uint8_t SX127X::transmit(uint8_t *data, uint8_t length) {

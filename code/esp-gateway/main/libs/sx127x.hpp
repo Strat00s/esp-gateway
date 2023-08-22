@@ -163,6 +163,8 @@
 #define LORA_DETECTION_OPTIMIZE_SF7_12 0x03
 
 
+#define SX127X_READ_MASK  0b01111111
+#define SX127X_WRITE_MASK 0b10000000
 #define SX127X_READ  0
 #define SX127X_WRITE 1
 
@@ -180,12 +182,14 @@ private:
     uint8_t high;
     uint8_t low;
 
-    uint8_t has_pin_mode  = false;
-    uint8_t has_pin_write = false;
-    uint8_t has_delay     = false;
-    uint8_t has_start     = false;
-    uint8_t has_end       = false;
-    uint8_t has_transfer  = false;
+    //TODO make this a union
+    uint8_t has_pin_mode      = false;
+    uint8_t has_pin_write     = false;
+    uint8_t has_delay         = false;
+    uint8_t has_spi_start_tr  = false;
+    uint8_t has_spi_end_tr    = false;
+    uint8_t has_transfer      = false;
+    uint8_t has_burstTransger = false;
 
     //TODO store them raw or as human readable?
     uint8_t sf  = 7;    //spreading factor
@@ -198,9 +202,9 @@ private:
     void (*pinWrite)(uint8_t pin, uint8_t lvl);
     void (*delay)(uint32_t delay_ms);
 
-    void (*startTransfer)();
-    void (*endTransfer)();
-    uint8_t (*spiTransfer)(uint8_t*, uint8_t*, uint8_t);
+    void (*SPIStartTransaction)();
+    void (*SPIEndTransaction)();
+    uint8_t (*spiTransfer)(uint8_t);
 
 public:
     //SX127X(uint8_t cs, uint8_t rst, uint8_t dio0);
@@ -216,11 +220,11 @@ public:
     void registerDelay(void (*func)(uint32_t));
 
     //TODO
-    void startSpiTransfer(void (*func)());
+    void registerSPIStartTransaction(void (*func)());
     //TODO
-    void endSpiTransfer(void (*func)());
+    void registerSPIEndTransaction(void (*func)());
     //TODO
-    void registerSpiTransfer(uint8_t (*func)(uint8_t*, uint8_t*, uint8_t));
+    void registerSpiTransfer(uint8_t (*func)(uint8_t));
 
 
     //TODO finish
@@ -383,9 +387,12 @@ public:
     void setPower();
 
 
+    void spiMakeTransaction(uint8_t addr, uint8_t *data, size_t length = 1);
+
+    //TODO burst read and write
     //TODO
     //TODO add masking
-    uint8_t readRegister(uint8_t addr);
+    uint8_t readRegister(uint8_t addr, uint8_t mask_lsb = 0, uint8_t mask_msb = 7);
     //TODO
     void writeRegister(uint8_t addr, uint8_t data);
     //TODO
