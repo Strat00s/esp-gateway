@@ -22,6 +22,9 @@
 #include <stdio.h>
 
 /*----(register fields)----*/
+
+//TODO check chip versions
+//TODO unify naming scheme (chip/module)
 //SX127X chip version
 #define SX1272_CHIP_VERSION 0x22
 #define SX1273_CHIP_VERSION 0x22
@@ -36,8 +39,7 @@
 
 #define RFM69_CHIP_VERSION  0x24
 
-
-//TODO registers
+//TODO unify naming scheme of values (LoRa, FSK, SX127X)
 //config 1
 #define LORA_BANDWIDTH_7_8kHz    0b00000000
 #define LORA_BANDWIDTH_10_4kHz   0b00010000
@@ -115,31 +117,88 @@
 #define FIFO_TX_BASE_ADDR_MAX                   0b00000000
 
 
+//TODO finish registers
 //SX127X registers
 #define REG_FIFO                                0x00
 #define REG_OP_MODE                             0x01
+//                                              0x02
+//                                              0x03
+//                                              0x04
+//                                              0x05
 #define REG_FRF_MSB                             0x06
 #define REG_FRF_MID                             0x07
 #define REG_FRF_LSB                             0x08
 #define REG_PA_CONFIG                           0x09
+//                                              0x0A
 #define REG_OCP                                 0x0B
+//                                              0x0C
 #define REG_FIFO_ADDR_PTR                       0x0D
 #define REG_FIFO_TX_BASE_ADDR                   0x0E
+//                                              0x0F
+//                                              0x10
+//                                              0x11
 #define REG_IRQ_FLAGS                           0x12
+//                                              0x13
+//                                              0x14
+//                                              0x15
+//                                              0x16
+//                                              0x17
+//                                              0x18
+//                                              0x19
+//                                              0x1A
+//                                              0x1B
+//                                              0x1C
 #define REG_MODEM_CONFIG_1                      0x1D
 #define REG_MODEM_CONFIG_2                      0x1E
+//                                              0x1F
 #define REG_PREAMBLE_MSB                        0x20
 #define REG_PREAMBLE_LSB                        0x21
 #define REG_PAYLOAD_LENGTH                      0x22
+//                                              0x23
 #define REG_HOP_PERIOD                          0x24
+//                                              0x25
 #define REG_MODEM_CONFIG_3                      0x26
+//                                              0x27
+//                                              0x28
+//                                              0x29
+//                                              0x2A
+//                                              0x2B
+//                                              0x2C
+//                                              0x2D
+//                                              0x2E
+//                                              0x2F
+//                                              0x30
 #define REG_DETECT_OPTIMIZE                     0x31
+//                                              0x32
+//                                              0x33
+//                                              0x34
+//                                              0x35
+//                                              0x36
 #define REG_DETECTION_THRESHOLD                 0x37
+//                                              0x38
 #define REG_SYNC_WORD                           0x39
+//                                              0x3A
+//                                              0x3B
+//                                              0x3C
+//                                              0x3D
+//                                              0x3E
+//                                              0x3F
 #define REG_DIO_MAPPING_1                       0x40
 #define REG_DIO_MAPPING_2                       0x41
 #define REG_VERSION                             0x42
+//                                              0x43
+//                                              0x44
+//                                              0x45
+//                                              0x46
+//                                              0x47
+//                                              0x48
+//                                              0x49
+//                                              0x4A
+//                                              0x4B
+//                                              0x4C
 #define REG_PA_DAC                              0x4D
+//                                              0x4E
+//                                              0x4F
 
 
 //hopping config
@@ -165,8 +224,14 @@
 
 #define SX127X_READ_MASK  0b01111111
 #define SX127X_WRITE_MASK 0b10000000
-#define SX127X_READ  0
-#define SX127X_WRITE 1
+
+
+//ERRORS
+#define ERR_INVALID_PREAMBLE_LEN     1
+#define ERR_INVALID_BANDWIDTH        2
+#define ERR_INVALID_MODEM_MODE       3
+#define ERR_INVALID_SPREADING_FACTOR 4
+#define ERR_INVALID_CODING_RATE      5
 
 
 class SX127X {
@@ -181,15 +246,23 @@ private:
     uint8_t output;
     uint8_t high;
     uint8_t low;
-
-    //TODO make this a union
-    uint8_t has_pin_mode      = false;
-    uint8_t has_pin_write     = false;
-    uint8_t has_delay         = false;
-    uint8_t has_spi_start_tr  = false;
-    uint8_t has_spi_end_tr    = false;
-    uint8_t has_transfer      = false;
-    uint8_t has_burstTransger = false;
+    
+    //TODO rename
+    //TODO constructor?
+    union Bits {
+        char all;
+        struct bits {
+            uint8_t has_pin_mode      :1;
+            uint8_t has_pin_write     :1;
+            uint8_t has_pin_read      :1;
+            uint8_t has_delay         :1;
+            uint8_t has_spi_start_tr  :1;
+            uint8_t has_spi_end_tr    :1;
+            uint8_t has_transfer      :1;
+            uint8_t has_burstTransger :1;
+        } single;
+        Bits() {bits{false, false, false, false, false, false, false, false};}
+    } flags;
 
     //TODO store them raw or as human readable?
     uint8_t sf  = 7;    //spreading factor
@@ -200,11 +273,12 @@ private:
 
     void (*pinMode)(uint8_t pin, uint8_t mode);
     void (*pinWrite)(uint8_t pin, uint8_t lvl);
+    uint8_t (*pinRead)(uint8_t pin);
     void (*delay)(uint32_t delay_ms);
 
     void (*SPIStartTransaction)();
     void (*SPIEndTransaction)();
-    uint8_t (*spiTransfer)(uint8_t);
+    uint8_t (*spiTransfer)(uint8_t data);
 
 public:
     //SX127X(uint8_t cs, uint8_t rst, uint8_t dio0);
@@ -216,6 +290,8 @@ public:
     void registerPinMode(void (*func)(uint8_t, uint8_t), uint8_t input, uint8_t output);
     //TODO
     void registerPinWrite(void (*func)(uint8_t, uint8_t), uint8_t high, uint8_t low);
+    //TODO
+    void registerPinRead(uint8_t (*func)(uint8_t));
     //TODO
     void registerDelay(void (*func)(uint32_t));
 
@@ -387,15 +463,26 @@ public:
     void setPower();
 
 
-    void spiMakeTransaction(uint8_t addr, uint8_t *data, size_t length = 1);
+    //TODO test
+    /** @brief Make entire SPI transaction 
+     * 
+     * @param addr Address to read from/start to read from
+     * @param data Data to send/receive
+     * @param length Length of data to send/receive
+     */
+    void SPIMakeTransaction(uint8_t addr, uint8_t *data, size_t length = 1);
 
-    //TODO burst read and write
-    //TODO
-    //TODO add masking
+    //TODO merge burst and single?
+
+    //TODO test
     uint8_t readRegister(uint8_t addr, uint8_t mask_lsb = 0, uint8_t mask_msb = 7);
-    //TODO
+    void readRegistersBurst(uint8_t addr, uint8_t *data, size_t length);
+
+    //TODO test
     void writeRegister(uint8_t addr, uint8_t data);
-    //TODO
+    void writeRegistersBurst(uint8_t addr, uint8_t *data, size_t length);
+
+    //TODO test
     void setRegister(uint8_t addr, uint8_t data, uint8_t mask_lsb = 0, uint8_t mask_msb = 7);
 
     //TODO
