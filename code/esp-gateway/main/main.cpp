@@ -73,6 +73,8 @@ static const char* TAG = "main";
 
 //SX127X lora(26, 33, 5);
 
+spi_device_handle_t dev_handl;
+
 
 //void pinMode(uint8_t pin, uint8_t mode) {
 //    //TODO pullup/down on input
@@ -94,6 +96,36 @@ static const char* TAG = "main";
 //    ESP_LOGI(TAG, "Delay of %lums", ms);
 //    vTaskDelay(ms / portTICK_PERIOD_MS);
 //}
+
+void SPIBeginTransaction() {
+    auto ret = spi_device_acquire_bus(dev_handl, portMAX_DELAY);
+    ESP_ERROR_CHECK(ret);
+}
+
+void SPIEndTransaction() {
+    spi_device_release_bus(dev_handl);
+}
+
+void SPITransfer(uint8_t *tx_buffer, uint8_t *rx_buffer, size_t tx_length, size_t rx_length) {
+    spi_transaction_t t;
+    memset(&t, 0, sizeof(t));
+    t.length = tx_length * 8;
+    t.tx_buffer = tx_buffer;
+    
+    auto ret = spi_device_polling_transmit(dev_handl, &t);
+    ESP_ERROR_CHECK(ret);
+    
+    //write only
+    if (rx_length == 0)
+        return;
+    
+    memset(&t, 0, sizeof(t));
+    t.length = rx_length * 8;
+    t.rx_buffer = rx_buffer;
+    
+    ret = spi_device_polling_transmit(dev_handl, &t);
+    ESP_ERROR_CHECK(ret);
+}
 
 
 extern "C" void app_main() {
@@ -117,7 +149,6 @@ extern "C" void app_main() {
     vTaskDelay(10 / portTICK_PERIOD_MS);
 
 
-    spi_device_handle_t dev_handl;
     spi_bus_config_t buscfg = {
         .mosi_io_num = MOSI,
         .miso_io_num = MISO,
@@ -160,33 +191,41 @@ extern "C" void app_main() {
         //ESP_ERROR_CHECK(ret);
         //vTaskDelay(100 / portTICK_PERIOD_MS);
 
-        uint8_t out = 0x0E & 0b01111111;
+
+        uint8_t out = 0x6 & 0b01111111;
         uint8_t in[3];
     
-        spi_transaction_t t;
-        memset(&t, 0, sizeof(t));
-        t.length = 8;
-        t.tx_buffer = &out;
+        //spi_transaction_t t;
+        //memset(&t, 0, sizeof(t));
+        //t.length = 8;
+        //t.tx_buffer = &out;
         //t.flags = SPI_TRANS_CS_KEEP_ACTIVE;
 
-        ret = spi_device_acquire_bus(dev_handl, portMAX_DELAY);
-        ESP_ERROR_CHECK(ret);
+        //ret = spi_device_acquire_bus(dev_handl, portMAX_DELAY);
+        //ESP_ERROR_CHECK(ret);
         
+        SPIBeginTransaction();
+
         gpio_set_level(CS1, 0);// pinWrite(CS1, 0);
         
-        ret = spi_device_polling_transmit(dev_handl, &t);
-        ESP_ERROR_CHECK(ret);
+        //ret = spi_device_polling_transmit(dev_handl, &t);
+        //ESP_ERROR_CHECK(ret);
 
-        memset(&t, 0, sizeof(t));
-        t.length = 8*3;
-        t.rx_buffer = &in;
+        //memset(&t, 0, sizeof(t));
+        //t.length = 8*3;
+        //t.rx_buffer = &in;
 
-        ret = spi_device_polling_transmit(dev_handl, &t);
-        ESP_ERROR_CHECK(ret);
+        SPITransfer(&out, in, 1, 3);
+
+        //ret = spi_device_polling_transmit(dev_handl, &t);
+        //ESP_ERROR_CHECK(ret);
 
         gpio_set_level(CS1, 1); //pinWrite(CS1, 1);
         
-        spi_device_release_bus(dev_handl);
+
+        SPIEndTransaction();
+
+        //spi_device_release_bus(dev_handl);
         
         ESP_LOGI(TAG, "Sent data: 0x%02X", out);
         ESP_LOGI(TAG, "Received data: 0x%02X 0x%02X 0x%02X", in[0], in[1], in[2]);
