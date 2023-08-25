@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <esp_log.h>
-#include "soc/gpio_struct.h"
+
 #include "driver/gpio.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -62,10 +62,16 @@
 #define RST1 GPIO_NUM_33
 #define CS4  GPIO_NUM_39
 #define RST4 GPIO_NUM_40
+#define CS2   GPIO_NUM_34
+#define RST2  GPIO_NUM_35
+#define CS3   GPIO_NUM_41
+#define RST3  GPIO_NUM_42
 
 #define SCK  GPIO_NUM_36
 #define MISO GPIO_NUM_37
 #define MOSI GPIO_NUM_38
+
+#define STATUS_LED GPIO_NUM_1
 
 
 static const char* TAG = "main";
@@ -107,6 +113,9 @@ void SPIEndTransaction() {
 }
 
 void SPITransfer(uint8_t *tx_buffer, uint8_t *rx_buffer, size_t tx_length, size_t rx_length) {
+    if (tx_buffer == nullptr)
+        return;
+
     spi_transaction_t t;
     memset(&t, 0, sizeof(t));
     t.length = tx_length * 8;
@@ -115,9 +124,11 @@ void SPITransfer(uint8_t *tx_buffer, uint8_t *rx_buffer, size_t tx_length, size_
     
     auto ret = spi_device_polling_transmit(dev_handl, &t);
     ESP_ERROR_CHECK(ret);
+
+    vTaskDelay(1000/ portTICK_PERIOD_MS);
     
     //write only
-    if (rx_length == 0)
+    if (rx_length == 0 || rx_buffer == nullptr)
         return;
     
     memset(&t, 0, sizeof(t));
@@ -131,23 +142,27 @@ void SPITransfer(uint8_t *tx_buffer, uint8_t *rx_buffer, size_t tx_length, size_
 
 extern "C" void app_main() {
     ESP_LOGI(TAG, "App start");
-
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
-
-
-    gpio_set_direction(CS1,  GPIO_MODE_INPUT_OUTPUT);// pinMode(CS1,  GPIO_MODE_OUTPUT);
-    gpio_set_direction(RST1, GPIO_MODE_INPUT_OUTPUT);// pinMode(RST1, GPIO_MODE_OUTPUT);
-    gpio_set_direction(CS4,  GPIO_MODE_INPUT_OUTPUT);//pinMode(CS4,  GPIO_MODE_OUTPUT);
-    gpio_set_direction(RST4, GPIO_MODE_INPUT_OUTPUT);//pinMode(RST4, GPIO_MODE_OUTPUT);
+    ESP_LOGI(TAG, "Reset all pins");
     
-    gpio_set_level(CS1, 1);// pinWrite(CS1, 1);
+    gpio_reset_pin(CS1);
+    gpio_reset_pin(RST1);
+    gpio_reset_pin(CS4);
+    gpio_reset_pin(RST4);
+    gpio_reset_pin(STATUS_LED);
+
+    gpio_set_direction(CS1,  GPIO_MODE_OUTPUT);// pinMode(CS1,  GPIO_MODE_OUTPUT);
+    gpio_set_direction(RST1, GPIO_MODE_OUTPUT);// pinMode(RST1, GPIO_MODE_OUTPUT);
+    gpio_set_direction(CS4,  GPIO_MODE_OUTPUT);//pinMode(CS4,  GPIO_MODE_OUTPUT);
+    gpio_set_direction(RST4, GPIO_MODE_OUTPUT);//pinMode(RST4, GPIO_MODE_OUTPUT);
+
+    gpio_set_level(CS1,  1);// pinWrite(CS1, 1);
     gpio_set_level(RST1, 1);// pinWrite(RST1, 1);
-    gpio_set_level(CS4, 1);// pinWrite(CS4, 1);
+    gpio_set_level(CS4,  1);// pinWrite(CS4, 1);
     gpio_set_level(RST4, 1);// pinWrite(RST4, 1);
 
-    //gpio_set_direction(STATUS_LED, GPIO_MODE_OUTPUT);//pinMode(STATUS_LED, GPIO_MODE_INPUT_OUTPUT);
+    gpio_set_direction(STATUS_LED, GPIO_MODE_OUTPUT);//pinMode(STATUS_LED, GPIO_MODE_INPUT_OUTPUT);
 
-    vTaskDelay(10 / portTICK_PERIOD_MS);
+    //vTaskDelay(10 / portTICK_PERIOD_MS);
 
 
     spi_bus_config_t buscfg = {
@@ -169,9 +184,9 @@ extern "C" void app_main() {
         .queue_size = 1,
         .pre_cb = NULL
     };
-
     ret = spi_bus_add_device(HSPI_HOST, &devcfg, &dev_handl);
     ESP_ERROR_CHECK(ret);
+
     //lora.registerDelay(delay);
     //lora.registerPinMode(pinMode, GPIO_MODE_INPUT_OUTPUT, GPIO_MODE_OUTPUT);
     //lora.registerPinWrite(pinWrite);
@@ -180,42 +195,66 @@ extern "C" void app_main() {
     //lora.registerSPIEndTransaction();
     //lora.registerSpiTransfer();
 
-    bool toggle = 0;
-
     while(true) {
         //ESP_LOGI(TAG, "Testing 2s delay");
-        //gpio_set_level(STATUS_LED, 1);//pinWrite(STATUS_LED, 1);
-
-        //ESP_LOGI(TAG, "Module 1 reset");
-        //ret = gpio_set_level(RST1, 0); //pinWrite(RST1, 0);
+        gpio_set_level(STATUS_LED, 0);//pinWrite(STATUS_LED, 1);
+        
+        //ESP_LOGI(TAG, "Module 4 reset");
+        //auto ret = gpio_set_level(RST1, 0); //pinWrite(RST1, 0);
         //ESP_ERROR_CHECK(ret);
-        //vTaskDelay(10 / portTICK_PERIOD_MS);
-        //ret = gpio_set_level(RST1, 0); //pinWrite(RST1, 1);
+        //vTaskDelay(1000 / portTICK_PERIOD_MS);
+        //ret = gpio_set_level(RST4, 1); //pinWrite(RST1, 1);
         //ESP_ERROR_CHECK(ret);
-        //vTaskDelay(100 / portTICK_PERIOD_MS);
+        //vTaskDelay(1000 / portTICK_PERIOD_MS);
 
-
-        toggle = !toggle;
-        uint8_t out;
-        if (toggle)
-            out = 0x6 & 0b01111111;
-        else
-            out = 0x42 & 0b01111111;
-        uint8_t in[3];
+        uint8_t out[2] = {0x06 | 0b10000000, 0xBB};
+        uint8_t in[3] = {0, 0, 0};
     
         SPIBeginTransaction();
+        gpio_set_level(CS4, 0);// pinWrite(CS1, 0);
+        SPITransfer(out, in, 2, 0);
+        gpio_set_level(CS4, 1); //pinWrite(CS1, 1);
+        SPIEndTransaction();
+
+        ESP_LOGI(TAG, "Sent data: 0x%02X 0x%02X", out[0], out[1]);
+        ESP_LOGI(TAG, "Received data: 0x%02X 0x%02X 0x%02X", in[0], in[1], in[2]);
+
+        out[1] = 0xAA;
+        memset(in, 0, 3);// in[3] = {0, 0, 0};
+
+        SPIBeginTransaction();
         gpio_set_level(CS1, 0);// pinWrite(CS1, 0);
-        //vTaskDelay(1 / portTICK_PERIOD_MS);
-        SPITransfer(&out, in, 1, 3);
-        //vTaskDelay(1 / portTICK_PERIOD_MS);
+        SPITransfer(out, in, 2, 0);
         gpio_set_level(CS1, 1); //pinWrite(CS1, 1);
         SPIEndTransaction();
 
-        ESP_LOGI(TAG, "Sent data: 0x%02X", out);
+        ESP_LOGI(TAG, "Sent data: 0x%02X 0x%02X", out[0], out[1]);
         ESP_LOGI(TAG, "Received data: 0x%02X 0x%02X 0x%02X", in[0], in[1], in[2]);
 
-        vTaskDelay(5000 / portTICK_PERIOD_MS);
+        out[0] = 0x06 & 0b01111111;
+        ESP_LOGI(TAG, "Reading it back");
+        SPIBeginTransaction();
+        gpio_set_level(CS4, 0);// pinWrite(CS1, 0);
+        SPITransfer(out, in, 1, 1);
+        gpio_set_level(CS4, 1); //pinWrite(CS1, 1);
+        SPIEndTransaction();
+
+        ESP_LOGI(TAG, "Sent data: 0x%02X 0x%02X", out[0], out[1]);
+        ESP_LOGI(TAG, "Received data: 0x%02X 0x%02X 0x%02X", in[0], in[1], in[2]);
+
+        memset(in, 0, 3);
+        SPIBeginTransaction();
+        gpio_set_level(CS1, 0);// pinWrite(CS1, 0);
+        SPITransfer(out, in, 1, 1);
+        gpio_set_level(CS1, 1); //pinWrite(CS1, 1);
+        SPIEndTransaction();
+
+        ESP_LOGI(TAG, "Sent data: 0x%02X 0x%02X", out[0], out[1]);
+        ESP_LOGI(TAG, "Received data: 0x%02X 0x%02X 0x%02X", in[0], in[1], in[2]);
+        
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
         //gpio_set_level(STATUS_LED, 0);//pinWrite(STATUS_LED, 0);
         //vTaskDelay(1000 / portTICK_PERIOD_MS);
+        break;
     }
 }
