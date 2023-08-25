@@ -2,8 +2,8 @@
  * @file SX127X.hpp
  * @author Lukáš Baštýř (l.bastyr@seznam.cz)
  * @brief SX127X header file
- * @version 0.1
- * @date 24-06-2023
+ * @version 0.2
+ * @date 23-08-2023
  * 
  * @copyright Copyright (c) 2023
  * 
@@ -259,7 +259,7 @@ private:
             uint8_t has_spi_start_tr  :1;
             uint8_t has_spi_end_tr    :1;
             uint8_t has_transfer      :1;
-            uint8_t has_burstTransger :1;
+            uint8_t has_burst_transfer :1;
         } single;
         Bits() {bits{false, false, false, false, false, false, false, false};}
     } flags;
@@ -276,9 +276,15 @@ private:
     uint8_t (*pinRead)(uint8_t pin);
     void (*delay)(uint32_t delay_ms);
 
-    void (*SPIStartTransaction)();
+    void (*SPIBeginTransaction)();
     void (*SPIEndTransaction)();
-    uint8_t (*spiTransfer)(uint8_t data);
+    /** @brief To be implemented by user. Transfer function for sending and receiveing data over SPI
+     *
+     * @param addr Register address. MSB of the address defines if it is read or write transaction (0 for read, 1 for write)
+     * @param buffer Buffer for in/out data (contains data to be written or will be filled with read data)
+     * @param length Length of buffer
+     */
+    void (*spiTransfer)(uint8_t addr, uint8_t *buffer, size_t length);
 
 public:
     //SX127X(uint8_t cs, uint8_t rst, uint8_t dio0);
@@ -286,21 +292,21 @@ public:
     ~SX127X();
 
 
-    //TODO
+    //TODO test
     void registerPinMode(void (*func)(uint8_t, uint8_t), uint8_t input, uint8_t output);
-    //TODO
-    void registerPinWrite(void (*func)(uint8_t, uint8_t), uint8_t high, uint8_t low);
-    //TODO
+    //TODO test
+    void registerPinWrite(void (*func)(uint8_t, uint8_t), uint8_t high = 1, uint8_t low = 0);
+    //TODO test
     void registerPinRead(uint8_t (*func)(uint8_t));
-    //TODO
+    //TODO test
     void registerDelay(void (*func)(uint32_t));
 
-    //TODO
+    //TODO test
     void registerSPIStartTransaction(void (*func)());
-    //TODO
+    //TODO test
     void registerSPIEndTransaction(void (*func)());
-    //TODO
-    void registerSpiTransfer(uint8_t (*func)(uint8_t));
+    //TODO test
+    void registerSpiTransfer(void (*func)(uint8_t, uint8_t *, size_t));
 
 
     //TODO finish
@@ -463,7 +469,7 @@ public:
     void setPower();
 
 
-    //TODO test
+    //TODO remove
     /** @brief Make entire SPI transaction 
      * 
      * @param addr Address to read from/start to read from

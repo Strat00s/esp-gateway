@@ -11,6 +11,10 @@
 
 #include "sx127x.hpp"
 
+
+static const char* TAG = "sx127x";
+
+
 SX127X::SX127X(uint8_t cs, uint8_t rst, uint8_t dio0) {
     this->cs     = cs;
     this->rst    = rst;
@@ -23,15 +27,15 @@ SX127X::~SX127X() {
 
 
 void SX127X::registerPinMode(void (*func)(uint8_t, uint8_t), uint8_t input, uint8_t output) {
-    this->pinMode      = func;
-    this->input        = input;
-    this->output       = output;
+    this->pinMode                   = func;
+    this->input                     = input;
+    this->output                    = output;
     this->flags.single.has_pin_mode = true;
 }
 void SX127X::registerPinWrite(void (*func)(uint8_t, uint8_t), uint8_t high, uint8_t low) {
-    this->pinWrite      = func;
-    this->high          = high;
-    this->low           = low;
+    this->pinWrite                   = func;
+    this->high                       = high;
+    this->low                        = low;
     this->flags.single.has_pin_write = true;
 }
 void SX127X::registerPinRead(uint8_t (*func)(uint8_t)) {
@@ -40,20 +44,20 @@ void SX127X::registerPinRead(uint8_t (*func)(uint8_t)) {
 }
 
 void SX127X::registerDelay(void (*func)(uint32_t)) {
-    this->delay     = func;
+    this->delay                  = func;
     this->flags.single.has_delay = true;
 }
 
 void SX127X::registerSPIStartTransaction(void (*func)()) {
-    this->SPIStartTransaction = func;
-    this->flags.single.has_spi_start_tr     = true;
+    this->SPIBeginTransaction           = func;
+    this->flags.single.has_spi_start_tr = true;
 }
 void SX127X::registerSPIEndTransaction(void (*func)()) {
-    this->SPIEndTransaction = func;
-    this->flags.single.has_spi_end_tr     = true;
+    this->SPIEndTransaction           = func;
+    this->flags.single.has_spi_end_tr = true;
 }
-void SX127X::registerSpiTransfer(uint8_t (*func)(uint8_t)) {
-    this->spiTransfer  = func;
+void SX127X::registerSpiTransfer(void (*func)(uint8_t, uint8_t *, size_t)) {
+    this->spiTransfer               = func;
     this->flags.single.has_transfer = true;
 }
 
@@ -305,7 +309,7 @@ uint8_t SX127X::setCodingRate(uint8_t coding_rate) {
 }
 
 uint8_t SX127X::setGain(uint8_t gain) {
-
+    return 0;
 }
 
 void SX127X::setCRC(bool enable) {
@@ -329,20 +333,15 @@ void SX127X::setLowDataRateOptimalization() {
 
 
 
-
 void SX127X::SPIMakeTransaction(uint8_t addr, uint8_t *data, size_t length) {
     if (this->flags.single.has_spi_start_tr)
-        this->SPIStartTransaction();
+        this->SPIBeginTransaction();
 
-    pinMode(this->cs, this->low);
-    this->spiTransfer(addr);
-    for (size_t i = 0; i < length; i++) {
-        if (addr & SX127X_WRITE_MASK)
-            this->spiTransfer(data[i]);
-        else
-            data[i] = this->spiTransfer(0);
-    }
-    pinMode(this->cs, this->high);
+    pinWrite(this->cs, this->low);
+    
+    this->spiTransfer(addr, data, length);
+    
+    pinWrite(this->cs, this->high);
 
     if (this->flags.single.has_spi_end_tr)
         this->SPIEndTransaction();
