@@ -18,6 +18,11 @@
 //TODO somehow add possible values to all arguments
 //TODO comments for every function
 
+//TODO reorder function order (in hpp, cpp and begin)
+//  1. user variables
+//  2. frequency and stuff
+//  3. power
+
 #pragma once
 #include <stdio.h>
 
@@ -94,6 +99,21 @@
 #define SX127X_MODEM_FSK_OOK    0b00000000
 #define SX127X_MODEM_LORA       0b10000000
 
+//LNA gains
+#define SX127X_LNA_GAIN_AUTOMATIC 0b00000000
+#define SX127X_LNA_GAIN_G1        0b00100000   //highest gain
+#define SX127X_LNA_GAIN_G2        0b01000000
+#define SX127X_LNA_GAIN_G3        0b01100000
+#define SX127X_LNA_GAIN_G4        0b10000000
+#define SX127X_LNA_GAIN_G5        0b10100000
+#define SX127X_LNA_GAIN_G6        0b11000000
+
+#define SX127X_LNA_GAIN_0DB  0b00100000 //highest gain
+#define SX127X_LNA_GAIN_6DB  0b01000000
+#define SX127X_LNA_GAIN_12DB 0b01100000
+#define SX127X_LNA_GAIN_24DB 0b10000000
+#define SX127X_LNA_GAIN_36DB 0b10100000
+#define SX127X_LNA_GAIN_48DB 0b11000000
 
 //power config
 #define SX127X_PA_SELECT_BOOST   0b10000000
@@ -131,7 +151,7 @@
 #define REG_PA_CONFIG                           0x09
 //                                              0x0A
 #define REG_OCP                                 0x0B
-//                                              0x0C
+#define REG_LNA                                 0x0C
 #define REG_FIFO_ADDR_PTR                       0x0D
 #define REG_FIFO_TX_BASE_ADDR                   0x0E
 //                                              0x0F
@@ -232,6 +252,8 @@
 #define ERR_INVALID_MODEM_MODE       3
 #define ERR_INVALID_SPREADING_FACTOR 4
 #define ERR_INVALID_CODING_RATE      5
+#define ERR_INVALID_CURRENT_LIMIT    6
+#define ERR_INVALID_GAIN             7
 
 
 class SX127X {
@@ -266,9 +288,9 @@ private:
 
     //TODO store them raw or as human readable?
     uint8_t sf  = 7;    //spreading factor
+    uint8_t cr  = 5;    //coding rate
     float bw    = 125;  //bandwidth in kHz
     float ts;           //symbol period/time on air (ms)
-    uint8_t cr  = 5;    //coding rate
 
 
     void (*pinMode)(uint8_t pin, uint8_t mode);
@@ -291,21 +313,14 @@ public:
     SX127X(uint8_t cs, uint8_t rst, uint8_t dio0);
     ~SX127X();
 
-
-    //TODO test
     void registerPinMode(void (*func)(uint8_t, uint8_t), uint8_t input, uint8_t output);
-    //TODO test
     void registerPinWrite(void (*func)(uint8_t, uint8_t), uint8_t high = 1, uint8_t low = 0);
-    //TODO test
     void registerPinRead(uint8_t (*func)(uint8_t));
-    //TODO test
     void registerDelay(void (*func)(uint32_t));
 
-    //TODO test
     void registerSPIStartTransaction(void (*func)());
-    //TODO test
     void registerSPIEndTransaction(void (*func)());
-    //TODO test
+    
     void registerSpiTransfer(void (*func)(uint8_t, uint8_t *, size_t));
 
 
@@ -320,18 +335,15 @@ public:
      */
     uint8_t begin(uint16_t frequency, uint8_t sync_word, uint16_t preamble_len);
 
-    //DONE
     /** @brief Reset the module*/
     void reset();
 
-    //DONE
     /** @brief Get the module version
      * 
      * @return Module version stored in register 
      */
     uint8_t getVersion();
 
-    //DONE
     /** @brief Set operation mode of the module
      * 
      * @param mode operation mode
@@ -346,8 +358,7 @@ public:
      */
     void setMode(uint8_t mode);
 
-    //DONE
-    /** \brief Set operation mode of the modem (LoRa or FSK/OOK)
+    /** @brief Set operation mode of the modem (LoRa or FSK/OOK)
      * 
      * @param modem mode mode
      * @param SX127X_MODEM_FSK_OOK
@@ -355,31 +366,29 @@ public:
      */
     void setModemMode(uint8_t modem);
 
-    //DONE
     uint8_t getModemMode();
 
-    //DONE ???
-    //TODO description
+    //TODO proper description
     /** @brief Set the frequency hopping period
      * @attention Hopping period (time between channel change) is then defined as Ts*frequency hopping period. Ts = symbol period
      * @param period period in ms in which to change the 
      */
     void setFrequencyHopping(uint8_t period);
 
-    //DONE
     /** @brief Set the sync word for keeping modules on different "networks"
      * 
      * @param sync_word desired sync word. Can be anything. 0x12/0x1424 is default. 0x34/0x3444 is reserved for LoRaWAN.
      */
     void setSyncWord(uint8_t sync_word);
 
-    //TODO
-    /** @brief Set the current limit of the module
+    /** @brief Set the current limit of the module's power amplifier. Minimum is 45mA, maximum 240mA.
+     *  5mA steps between 45mA to 120mA. 10mA steps between 120mA and 240mA. Set to 0 to disable overload current protection.
      * 
+     * @param max_current maximum current drain of the power amplifier (if the module has one).
+     * @return ERR_INVALID_CURRENT_LIMIT if invalid current value is provided
      */
-    void setCurrentLimit();
+    uint8_t setCurrentLimit(uint8_t max_current);
 
-    //DONE
     //TODO FSK
     /** @brief Set the preamble length used to syncrhonize receiver with the incoming data
      * 
@@ -388,7 +397,6 @@ public:
      */
     uint8_t setPreambleLength(uint16_t preamble_length);
 
-    //DONE
     /** @brief Set bandwidth. If needed, enable/disable low data rate optimalization
      * 
      * @param bandwidth desired bandwidth
@@ -405,15 +413,13 @@ public:
      * @return 0 on success. ERR_INVALID_MODEM_MODE if not in LoRa mode. ERR_INVALID_BANDWIDTH if invalid bandwidth is provided.
      */
     uint8_t setBandwidth(uint8_t bandwidth);
-    
-    //DONE
+
     /** @brief Get configured bandwidth
     * 
     * @return Bandwidth in Hz
     */
     uint32_t getBandwidth();
 
-    //DONE
     /** @brief Set spreading factor. If needed, enable/disable low data rate optimalization
      * 
      * @param spreading_factor desired spreading factor
@@ -428,7 +434,6 @@ public:
      */
     uint8_t setSpreadingFactor(uint8_t spreading_factor);
 
-    //DONE
     /** @brief Set the module radio frequency
      * 
      * @param frequency Frequency in MHz
@@ -436,7 +441,6 @@ public:
      */
     uint8_t setFrequency(uint16_t frequency);
 
-    //DONE
     /** @brief Set the coding rate
      * 
      * @param coding_rate desired coding rate
@@ -448,10 +452,21 @@ public:
      */
     uint8_t setCodingRate(uint8_t coding_rate);
 
-    //TODO
+    /**
+     * @brief Set the receiver Low-Noise Amplifier gain. G1 is the highest and G6 is the lowest.
+     * 
+     * @param gain Desired gain setting. Automatic is recommended (default)
+     * @param SX127X_LNA_GAIN_AUTOMATIC
+     * @param SX127X_LNA_GAIN_G1
+     * @param SX127X_LNA_GAIN_G2
+     * @param SX127X_LNA_GAIN_G3
+     * @param SX127X_LNA_GAIN_G4
+     * @param SX127X_LNA_GAIN_G5
+     * @param SX127X_LNA_GAIN_G6
+     * @return uint8_t 
+     */
     uint8_t setGain(uint8_t gain);
 
-    //DONE
     /** @brief Enable or disable CRC 
      * 
      * @param enable 
@@ -459,17 +474,15 @@ public:
     void setCRC(bool enable);
 
 
-    //DONE
     /** @brief Enable low data rate optimalization if symbol length exceeds 16ms, disable otherwise.
     *
     */
     void setLowDataRateOptimalization();
 
     //TODO
-    void setPower();
+    void setPower(int8_t power, bool pa_boost = true);
 
 
-    //TODO remove
     /** @brief Make entire SPI transaction 
      * 
      * @param addr Address to read from/start to read from
@@ -477,19 +490,12 @@ public:
      * @param length Length of data to send/receive
      */
     void SPIMakeTransaction(uint8_t addr, uint8_t *data, size_t length = 1);
-
-    //TODO merge burst and single?
-
-    //TODO test
     uint8_t readRegister(uint8_t addr, uint8_t mask_lsb = 0, uint8_t mask_msb = 7);
     void readRegistersBurst(uint8_t addr, uint8_t *data, size_t length);
-
-    //TODO test
     void writeRegister(uint8_t addr, uint8_t data);
     void writeRegistersBurst(uint8_t addr, uint8_t *data, size_t length);
-
-    //TODO test
     void setRegister(uint8_t addr, uint8_t data, uint8_t mask_lsb = 0, uint8_t mask_msb = 7);
+
 
     //TODO
     uint8_t transmit(uint8_t *data, uint8_t length);
