@@ -383,6 +383,7 @@ uint8_t SX127X::setPower(int8_t power, bool pa_boost) {
 
 
 uint8_t SX127X::transmit(uint8_t *data, uint8_t length) {
+    //TODO time on air and timeout
     setMode(SX127X_OP_MODE_STANDBY);
 
     //set IO mapping for dio0 to be end of transmission
@@ -403,8 +404,14 @@ uint8_t SX127X::transmit(uint8_t *data, uint8_t length) {
 
     //start transmission
     setMode(SX127X_OP_MODE_TX);
-    while(!pinRead(this->dio0));    //sometimes not enough
+
+    //wait for transmission to end
+    while(!pinRead(this->dio0));
+
+    //sometimes, just waiting for the gpio is not enough, so check the IRQ flags
     while(!(readRegister(REG_IRQ_FLAGS) & 0b00001000));
+
+    //go back to standby
     setMode(SX127X_OP_MODE_STANDBY);
 
     //read and clear interrupts
@@ -413,8 +420,34 @@ uint8_t SX127X::transmit(uint8_t *data, uint8_t length) {
     return reg;
 }
 
-uint8_t SX127X::receive(uint8_t *data) {
-    
+uint8_t SX127X::receive(uint8_t *data, uint8_t length) {
+    setMode(SX127X_OP_MODE_STANDBY);
+
+    //TODO other pins
+    //set IO mapping
+    setRegister(REG_DIO_MAPPING_1, DIO0_LORA_RX_DONE, 6, 7);
+
+    uint8_t packet_length = length;
+
+    if (this->sf == 6)
+        setRegister(REG_PAYLOAD_LENGTH, length);
+
+    //TODO errata
+
+    //clear interrupt flags
+    writeRegister(REG_IRQ_FLAGS, 0xFF);
+
+    //set FIFO pointers (all 256 bytes used for RX)
+    setRegister(REG_FIFO_RX_BASE_ADDR, 0);
+    setRegister(REG_FIFO_ADDR_PTR, 0);
+
+    //TODO continuous
+    setMode(SX127X_OP_MODE_RXSINGLE);
+
+    //TODO other pins (timeout only when DIO1 is not used)
+    uint32_t timeout = 100 * float(uint16_t(1) << this->sf) / this->bw;
+
+    //TODO finish
 }
 
 void SX127X::SPIMakeTransaction(uint8_t addr, uint8_t *data, size_t length) {

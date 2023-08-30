@@ -1,30 +1,30 @@
 /**
- * @file SX127X.hpp
+ * @file sx127x.hpp
  * @author Lukáš Baštýř (l.bastyr@seznam.cz)
- * @brief SX127X header file
+ * @brief 
  * @version 0.2
- * @date 23-08-2023
+ * @date 30-08-2023
  * 
  * @copyright Copyright (c) 2023
  * 
  */
 
 
-//TODO unify macro names
-//TODO test all functions
-//TODO all registers
-//TODO return types
+//TODO unify naming scheme (chip/module) (LoRa, FSK, SX127X)
+//TODO values
+//TODO add all registers
+//TODO return values
 //TODO FSK
-//TODO somehow add possible values to all arguments
-//TODO comments for every function
 
 
 #pragma once
 #include <stdio.h>
 
-/*----(register fields)----*/
 
-//TODO unify naming scheme (chip/module)
+//read and write masks
+#define SX127X_READ_MASK  0b01111111
+#define SX127X_WRITE_MASK 0b10000000
+
 //SX127X chip version
 #define SX1272_CHIP_VERSION 0x22
 #define SX1273_CHIP_VERSION 0x22
@@ -39,7 +39,7 @@
 
 #define RFM69_CHIP_VERSION  0x24
 
-//TODO unify naming scheme of values (LoRa, FSK, SX127X)
+
 //config 1
 #define LORA_BANDWIDTH_7_8kHz    0b00000000
 #define LORA_BANDWIDTH_10_4kHz   0b00010000
@@ -52,10 +52,10 @@
 #define LORA_BANDWIDTH_250kHz    0b10000000
 #define LORA_BANDWIDTH_500kHz    0b10010000
 
-#define LORA_CODING_RATE_4_5              0b00000010
-#define LORA_CODING_RATE_4_6              0b00000100
-#define LORA_CODING_RATE_4_7              0b00000110
-#define LORA_CODING_RATE_4_8              0b00001000
+#define LORA_CODING_RATE_4_5     0b00000010
+#define LORA_CODING_RATE_4_6     0b00000100
+#define LORA_CODING_RATE_4_7     0b00000110
+#define LORA_CODING_RATE_4_8     0b00001000
 
 #define LORA_IMPLICIT_HEADER     0b00000001
 #define LORA_EXPLICIT_HEADER     0b00000000
@@ -103,14 +103,14 @@
 #define SX127X_LNA_GAIN_G5        0b10100000
 #define SX127X_LNA_GAIN_G6        0b11000000
 
-#define SX127X_LNA_GAIN_0DB  0b00100000 //highest gain
-#define SX127X_LNA_GAIN_6DB  0b01000000
-#define SX127X_LNA_GAIN_12DB 0b01100000
-#define SX127X_LNA_GAIN_24DB 0b10000000
-#define SX127X_LNA_GAIN_36DB 0b10100000
-#define SX127X_LNA_GAIN_48DB 0b11000000
+#define SX127X_LNA_GAIN_0DB       0b00100000 //highest gain
+#define SX127X_LNA_GAIN_6DB       0b01000000
+#define SX127X_LNA_GAIN_12DB      0b01100000
+#define SX127X_LNA_GAIN_24DB      0b10000000
+#define SX127X_LNA_GAIN_36DB      0b10100000
+#define SX127X_LNA_GAIN_48DB      0b11000000
 
-//power config
+//PA config
 #define SX127X_PA_SELECT_BOOST 0b10000000
 #define SX127X_PA_SELECT_RFO   0b00000000
 #define SX127X_PA_BOOST_OFF    0b00000100
@@ -122,17 +122,73 @@
 #define SX127X_OCP_TRIM 0b00001011
 
 //hopping config
-#define HOP_PERIOD_OFF                          0b00000000
+#define HOP_PERIOD_OFF 0b00000000
 
-//Detection optimize
-#define DETECT_OPTIMIZE_SF_7_12                 0b00000011
-//Detection treshold
-#define DETECTION_THRESHOLD_SF_7_12             0b00001010
+//detection threashold (for spreading factor only)
+#define LORA_DETECTION_THRESHOLD_SF6    0b00001100
+#define LORA_DETECTION_THRESHOLD_SF7_12 0b00001010
+
+//detection optimizalization (for spreading factor only)
+#define LORA_DETECTION_OPTIMIZE_SF6    0b00000101
+#define LORA_DETECTION_OPTIMIZE_SF7_12 0b00000011
 
 //pinmaps
-#define DIO0_LORA_TX_DONE                       0b01000000
-
-#define FIFO_TX_BASE_ADDR_MAX                   0b00000000
+#define DIO0_LORA_RX_DONE              0b00000000
+#define DIO0_LORA_TX_DONE              0b01000000
+#define DIO0_LORA_CAD_DONE             0b10000000
+#define DIO0_CONT_MODE_READY           0b11000000
+#define DIO0_CONT_SYNC_ADDRESS         0b00000000
+#define DIO0_CONT_RSSI_PREAMBLE_DETECT 0b01000000
+#define DIO0_CONT_RX_READY             0b10000000
+#define DIO0_CONT_TX_READY             0b00000000
+#define DIO0_PACK_PAYLOAD_READY        0b00000000
+#define DIO0_PACK_PACKET_SENT          0b00000000
+#define DIO0_PACK_CRC_OK               0b01000000
+#define DIO0_PACK_TEMP_CHANGE_LOW_BAT  0b11000000
+#define DIO1_LORA_RX_TIMEOUT           0b00000000
+#define DIO1_LORA_FHSS_CHANGE_CHANNEL  0b00010000
+#define DIO1_LORA_CAD_DETECTED         0b00100000
+#define DIO1_CONT_DCLK                 0b00000000
+#define DIO1_CONT_RSSI_PREAMBLE_DETECT 0b00010000
+#define DIO1_PACK_FIFO_LEVEL           0b00000000
+#define DIO1_PACK_FIFO_EMPTY           0b00010000
+#define DIO1_PACK_FIFO_FULL            0b00100000
+#define DIO2_LORA_FHSS_CHANGE_CHANNEL  0b00000000
+#define DIO2_CONT_DATA                 0b00000000
+#define DIO2_PACK_FIFO_FULL            0b00000000
+#define DIO2_PACK_RX_READY             0b00000100
+#define DIO2_PACK_TIMEOUT              0b00001000
+#define DIO2_PACK_SYNC_ADDRESS         0b00011000
+#define DIO3_LORA_CAD_DONE             0b00000000
+#define DIO3_LORA_VALID_HEADER         0b00000001
+#define DIO3_LORA_PAYLOAD_CRC_ERROR    0b00000010
+#define DIO3_CONT_TIMEOUT              0b00000000
+#define DIO3_CONT_RSSI_PREAMBLE_DETECT 0b00000001
+#define DIO3_CONT_TEMP_CHANGE_LOW_BAT  0b00000011
+#define DIO3_PACK_FIFO_EMPTY           0b00000000
+#define DIO3_PACK_TX_READY             0b00000001
+#define DIO4_LORA_CAD_DETECTED         0b10000000
+#define DIO4_LORA_PLL_LOCK             0b01000000
+#define DIO4_CONT_TEMP_CHANGE_LOW_BAT  0b00000000
+#define DIO4_CONT_PLL_LOCK             0b01000000
+#define DIO4_CONT_TIMEOUT              0b10000000
+#define DIO4_CONT_MODE_READY           0b11000000
+#define DIO4_PACK_TEMP_CHANGE_LOW_BAT  0b00000000
+#define DIO4_PACK_PLL_LOCK             0b01000000
+#define DIO4_PACK_TIMEOUT              0b10000000
+#define DIO4_PACK_RSSI_PREAMBLE_DETECT 0b11000000
+#define DIO5_LORA_MODE_READY           0b00000000
+#define DIO5_LORA_CLK_OUT              0b00010000
+#define DIO5_CONT_CLK_OUT              0b00000000
+#define DIO5_CONT_PLL_LOCK             0b00010000
+#define DIO5_CONT_RSSI_PREAMBLE_DETECT 0b00100000
+#define DIO5_CONT_MODE_READY           0b00110000
+#define DIO5_PACK_CLK_OUT              0b00000000
+#define DIO5_PACK_PLL_LOCK             0b00010000
+#define DIO5_PACK_DATA                 0b00100000
+#define DIO5_PACK_MODE_READY           0b00110000
+#define DIO_MAP_PREAMBLE_DETECT        0b00000001
+#define DIO_MAP_RSSI                   0b00000000
 
 
 //TODO finish registers
@@ -152,8 +208,8 @@
 #define REG_LNA                                 0x0C
 #define REG_FIFO_ADDR_PTR                       0x0D
 #define REG_FIFO_TX_BASE_ADDR                   0x0E
-//                                              0x0F
-//                                              0x10
+#define REG_FIFO_RX_BASE_ADDR                   0x0F
+#define REG_FIFO_RX_CURRENT_ADDR                0x10
 //                                              0x11
 #define REG_IRQ_FLAGS                           0x12
 //                                              0x13
@@ -218,30 +274,6 @@
 //                                              0x4E
 //                                              0x4F
 
-
-//hopping config
-#define HOP_PERIOD_OFF                          0b00000000
-
-//Detection optimize
-#define DETECT_OPTIMIZE_SF_7_12                 0b00000011
-//Detection treshold
-#define DETECTION_THRESHOLD_SF_7_12             0b00001010
-
-//pinmaps
-#define DIO0_LORA_TX_DONE                       0b01000000
-
-#define FIFO_TX_BASE_ADDR_MAX                   0b00000000
-
-//detection threashold (for spreading factor only)
-#define LORA_DETECTION_THRESHOLD_SF6    0x0C
-#define LORA_DETECTION_THRESHOLD_SF7_12 0x0A
-//detection optimizalization (for spreading factor only)
-#define LORA_DETECTION_OPTIMIZE_SF6    0x05
-#define LORA_DETECTION_OPTIMIZE_SF7_12 0x03
-
-
-#define SX127X_READ_MASK  0b01111111
-#define SX127X_WRITE_MASK 0b10000000
 
 
 //ERRORS
@@ -481,13 +513,11 @@ public:
     uint8_t setPower(int8_t power, bool pa_boost = true);
 
 
-
-    //TODO finish
     /** @brief Transmit data and wait for the transmission to finish
      * 
      * @param data Data buffer
      * @param length Length of data to be sent (max 256B)
-     * @return uint8_t //TODO return value
+     * @return IRQ flags
      */
     uint8_t transmit(uint8_t *data, uint8_t length);
 
@@ -495,9 +525,10 @@ public:
     /** @brief Polling data receive
      * 
      * @param data Buffer to which to store the data (must be at least as long as the received data length)
+     * @param length Length of data to be received. Only used when using lowest possible spreading factor LORA_SPREADING_FACTOR_6
      * @return //TODO return value
      */
-    uint8_t receive(uint8_t* data);
+    uint8_t receive(uint8_t* data, uint8_t length = 0);
 
 
     /** @brief Make entire SPI transaction 
