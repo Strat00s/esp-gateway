@@ -18,17 +18,12 @@
 //TODO somehow add possible values to all arguments
 //TODO comments for every function
 
-//TODO reorder function order (in hpp, cpp and begin)
-//  1. user variables
-//  2. frequency and stuff
-//  3. power
 
 #pragma once
 #include <stdio.h>
 
 /*----(register fields)----*/
 
-//TODO check chip versions
 //TODO unify naming scheme (chip/module)
 //SX127X chip version
 #define SX1272_CHIP_VERSION 0x22
@@ -36,7 +31,7 @@
 
 #define SX1276_CHIP_VERSION 0x12
 #define SX1277_CHIP_VERSION 0x12
-#define SX127X_CHIP_VERSION 0x12
+#define SX1278_CHIP_VERSION 0x12
 #define SX1279_CHIP_VERSION 0x12
 
 #define RFM95_CHIP_VERSION  0x11
@@ -116,12 +111,15 @@
 #define SX127X_LNA_GAIN_48DB 0b11000000
 
 //power config
-#define SX127X_PA_SELECT_BOOST   0b10000000
-#define SX127X_PA_SELECT_RFO     0b00000000
+#define SX127X_PA_SELECT_BOOST 0b10000000
+#define SX127X_PA_SELECT_RFO   0b00000000
+#define SX127X_PA_BOOST_OFF    0b00000100
+#define SX127X_PA_BOOST_ON     0b00000111
+
 //overcurrent protection
-#define OCP_OFF                                 0b00000000
-#define OCP_ON                                  0b00100000
-#define OCP_TRIM                                0b00001011
+#define SX127X_OCP_OFF  0b00000000
+#define SX127X_OCP_ON   0b00100000
+#define SX127X_OCP_TRIM 0b00001011
 
 //hopping config
 #define HOP_PERIOD_OFF                          0b00000000
@@ -254,11 +252,14 @@
 #define ERR_INVALID_CODING_RATE      5
 #define ERR_INVALID_CURRENT_LIMIT    6
 #define ERR_INVALID_GAIN             7
+#define ERR_INVALID_POWER            8
+#define ERR_MISSING_CALLBACK         9
+#define ERR_INVALID_CHIP_VERSION     10 //wrong chip version was read. Check you connection.
 
 
 class SX127X {
 private:
-    uint8_t chip_version = 0;   //TODO store it?
+    uint8_t chip_version = 0;
 
     uint8_t dio0 = 0;
     uint8_t cs   = 0;
@@ -269,28 +270,24 @@ private:
     uint8_t high;
     uint8_t low;
     
-    //TODO rename
-    //TODO constructor?
     union Bits {
         char all;
         struct bits {
-            uint8_t has_pin_mode      :1;
-            uint8_t has_pin_write     :1;
-            uint8_t has_pin_read      :1;
-            uint8_t has_delay         :1;
-            uint8_t has_spi_start_tr  :1;
-            uint8_t has_spi_end_tr    :1;
-            uint8_t has_transfer      :1;
+            uint8_t has_pin_mode       :1;
+            uint8_t has_pin_write      :1;
+            uint8_t has_pin_read       :1;
+            uint8_t has_delay          :1;
+            uint8_t has_spi_start_tr   :1;
+            uint8_t has_spi_end_tr     :1;
+            uint8_t has_transfer       :1;
             uint8_t has_burst_transfer :1;
         } single;
         Bits() {bits{false, false, false, false, false, false, false, false};}
     } flags;
 
-    //TODO store them raw or as human readable?
-    uint8_t sf  = 7;    //spreading factor
-    uint8_t cr  = 5;    //coding rate
+
+    uint8_t sf  = LORA_SPREADING_FACTOR_7 >> 4;// 7;    //spreading factor
     float bw    = 125;  //bandwidth in kHz
-    float ts;           //symbol period/time on air (ms)
 
 
     void (*pinMode)(uint8_t pin, uint8_t mode);
@@ -320,12 +317,9 @@ public:
 
     void registerSPIStartTransaction(void (*func)());
     void registerSPIEndTransaction(void (*func)());
-    
     void registerSpiTransfer(void (*func)(uint8_t, uint8_t *, size_t));
 
 
-    //TODO finish
-    //TODO frequency range check for each module
     /** @brief Initialize module to it's default settings
      * 
      * @param frequency Desired radio frequency in MHz
@@ -334,6 +328,7 @@ public:
      * @return uint8_t 
      */
     uint8_t begin(uint16_t frequency, uint8_t sync_word, uint16_t preamble_len);
+
 
     /** @brief Reset the module*/
     void reset();
@@ -366,14 +361,12 @@ public:
      */
     void setModemMode(uint8_t modem);
 
+    /** @brief Get modem mode
+     * 
+     * @return Current modem mdoe  
+     */
     uint8_t getModemMode();
 
-    //TODO proper description
-    /** @brief Set the frequency hopping period
-     * @attention Hopping period (time between channel change) is then defined as Ts*frequency hopping period. Ts = symbol period
-     * @param period period in ms in which to change the 
-     */
-    void setFrequencyHopping(uint8_t period);
 
     /** @brief Set the sync word for keeping modules on different "networks"
      * 
@@ -381,21 +374,20 @@ public:
      */
     void setSyncWord(uint8_t sync_word);
 
-    /** @brief Set the current limit of the module's power amplifier. Minimum is 45mA, maximum 240mA.
-     *  5mA steps between 45mA to 120mA. 10mA steps between 120mA and 240mA. Set to 0 to disable overload current protection.
-     * 
-     * @param max_current maximum current drain of the power amplifier (if the module has one).
-     * @return ERR_INVALID_CURRENT_LIMIT if invalid current value is provided
-     */
-    uint8_t setCurrentLimit(uint8_t max_current);
-
-    //TODO FSK
     /** @brief Set the preamble length used to syncrhonize receiver with the incoming data
      * 
      * @param preamble_length preamble length between 6 and 65535
      * @return 0 on success. ERR_INVALID_PREAMBLE_LEN if preamble length is less than 6.
      */
     uint8_t setPreambleLength(uint16_t preamble_length);
+
+
+    /** @brief Set the module radio frequency
+     * 
+     * @param frequency Frequency in MHz
+     * @return 0 on success, ERR_INVALID_FREQUENCY if invalid frequency is provided for current module version
+     */
+    uint8_t setFrequency(uint16_t frequency);
 
     /** @brief Set bandwidth. If needed, enable/disable low data rate optimalization
      * 
@@ -414,12 +406,6 @@ public:
      */
     uint8_t setBandwidth(uint8_t bandwidth);
 
-    /** @brief Get configured bandwidth
-    * 
-    * @return Bandwidth in Hz
-    */
-    uint32_t getBandwidth();
-
     /** @brief Set spreading factor. If needed, enable/disable low data rate optimalization
      * 
      * @param spreading_factor desired spreading factor
@@ -434,13 +420,6 @@ public:
      */
     uint8_t setSpreadingFactor(uint8_t spreading_factor);
 
-    /** @brief Set the module radio frequency
-     * 
-     * @param frequency Frequency in MHz
-     * @return 0 on success, ERR_INVALID_FREQUENCY if invalid frequency is provided for current module version
-     */
-    uint8_t setFrequency(uint16_t frequency);
-
     /** @brief Set the coding rate
      * 
      * @param coding_rate desired coding rate
@@ -452,8 +431,7 @@ public:
      */
     uint8_t setCodingRate(uint8_t coding_rate);
 
-    /**
-     * @brief Set the receiver Low-Noise Amplifier gain. G1 is the highest and G6 is the lowest.
+    /** @brief Set the receiver Low-Noise Amplifier gain. G1 is the highest and G6 is the lowest.
      * 
      * @param gain Desired gain setting. Automatic is recommended (default)
      * @param SX127X_LNA_GAIN_AUTOMATIC
@@ -471,16 +449,55 @@ public:
      * 
      * @param enable 
      */
-    void setCRC(bool enable);
-
+    uint8_t setCRC(bool enable);
 
     /** @brief Enable low data rate optimalization if symbol length exceeds 16ms, disable otherwise.
     *
     */
     void setLowDataRateOptimalization();
 
-    //TODO
-    void setPower(int8_t power, bool pa_boost = true);
+    //TODO proper description
+    /** @brief Set the frequency hopping period
+     * @attention Hopping period (time between channel change) is then defined as Ts*frequency hopping period. Ts = symbol period
+     * @param period period in ms(???) in which to change the band
+     */
+    void setFrequencyHopping(uint8_t period);
+
+
+    /** @brief Set the current limit of the module's power amplifier. Minimum is 45mA, maximum 240mA.
+     *  5mA steps between 45mA to 120mA. 10mA steps between 120mA and 240mA. Set to 0 to disable overload current protection.
+     * 
+     * @param max_current maximum current drain of the power amplifier (if the module has one).
+     * @return ERR_INVALID_CURRENT_LIMIT if invalid current value is provided
+     */
+    uint8_t setCurrentLimit(uint8_t max_current);
+
+    /** @brief Set the module output power. Some modules do not have RFO pin connected and only use PA_BOOSt pin.
+     * 
+     * @param power Desired power from -4dBm to 15dBm when using RFO. From 2dBm to 17dBm or 20dBm when using PA_BOOST.
+     * @param pa_boost Wheter to use PA_BOOST pin or RFO pin.
+     * @return 0 on success. ERR_INVALID_POWER when invalid power for specified pin is provided.
+     */
+    uint8_t setPower(int8_t power, bool pa_boost = true);
+
+
+
+    //TODO finish
+    /** @brief Transmit data and wait for the transmission to finish
+     * 
+     * @param data Data buffer
+     * @param length Length of data to be sent (max 256B)
+     * @return uint8_t //TODO return value
+     */
+    uint8_t transmit(uint8_t *data, uint8_t length);
+
+    //TODO finish
+    /** @brief Polling data receive
+     * 
+     * @param data Buffer to which to store the data (must be at least as long as the received data length)
+     * @return //TODO return value
+     */
+    uint8_t receive(uint8_t* data);
 
 
     /** @brief Make entire SPI transaction 
@@ -490,21 +507,45 @@ public:
      * @param length Length of data to send/receive
      */
     void SPIMakeTransaction(uint8_t addr, uint8_t *data, size_t length = 1);
-    uint8_t readRegister(uint8_t addr, uint8_t mask_lsb = 0, uint8_t mask_msb = 7);
-    void readRegistersBurst(uint8_t addr, uint8_t *data, size_t length);
-    void writeRegister(uint8_t addr, uint8_t data);
-    void writeRegistersBurst(uint8_t addr, uint8_t *data, size_t length);
-    void setRegister(uint8_t addr, uint8_t data, uint8_t mask_lsb = 0, uint8_t mask_msb = 7);
-
-
-    //TODO
-    uint8_t transmit(uint8_t *data, uint8_t length);
-
-    //TODO
-    /** @brief Polling data receive
+    
+    /** @brief Read single register from the module. If only specific range change is required, use mask_xsb arguments to specify a mask of bits which will be kept from the register
      * 
-     * @param data array to which to store the data
-     * @return 
+     * @param addr Register address to be read from
+     * @param mask_lsb LSB mask bit
+     * @param mask_msb MSB mask bit
+     * @return Data stored in the register
      */
-    uint8_t receive(uint8_t* data);
+    uint8_t readRegister(uint8_t addr, uint8_t mask_lsb = 0, uint8_t mask_msb = 7);
+    
+    /** @brief Read multiple registers one after another
+     * 
+     * @param addr Starting address (is automatically incremented)
+     * @param data Buffer for storing read data
+     * @param length Length of the data buffer (how many registers to read from)
+     */
+    void readRegistersBurst(uint8_t addr, uint8_t *data, size_t length);
+    
+    /** @brief Write data to register
+     * 
+     * @param addr Register address to be writen to
+     * @param data Data to be writen
+     */
+    void writeRegister(uint8_t addr, uint8_t data);
+    
+    /** @brief Write multiple reigster one after another
+     * 
+     * @param addr Starting address (is automatically incremented)
+     * @param data Buffer to be writen to the registers
+     * @param length Length of the data buffer (how many register to write to)
+     */
+    void writeRegistersBurst(uint8_t addr, uint8_t *data, size_t length);
+    
+    /** @brief Set register to a specific value. If only a specific range change is required, use mask_xsb arguments to specify a mask o bits which will be overwriten in the register (the rest of the register will remain the same).
+     * 
+     * @param addr Register address to set
+     * @param data Data to write
+     * @param mask_lsb LSB mask bit
+     * @param mask_msb MSB mask bit
+     */
+    void setRegister(uint8_t addr, uint8_t data, uint8_t mask_lsb = 0, uint8_t mask_msb = 7);
 };

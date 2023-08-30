@@ -32,28 +32,35 @@ void SX127X::registerPinMode(void (*func)(uint8_t, uint8_t), uint8_t input, uint
     this->output                    = output;
     this->flags.single.has_pin_mode = true;
 }
+
 void SX127X::registerPinWrite(void (*func)(uint8_t, uint8_t), uint8_t high, uint8_t low) {
     this->pinWrite                   = func;
     this->high                       = high;
     this->low                        = low;
     this->flags.single.has_pin_write = true;
 }
+
 void SX127X::registerPinRead(uint8_t (*func)(uint8_t)) {
     this->pinRead = func;
     this->flags.single.has_pin_read  = true;
 }
+
 void SX127X::registerDelay(void (*func)(uint32_t)) {
     this->delay                  = func;
     this->flags.single.has_delay = true;
 }
+
+
 void SX127X::registerSPIStartTransaction(void (*func)()) {
     this->SPIBeginTransaction           = func;
     this->flags.single.has_spi_start_tr = true;
 }
+
 void SX127X::registerSPIEndTransaction(void (*func)()) {
     this->SPIEndTransaction           = func;
     this->flags.single.has_spi_end_tr = true;
 }
+
 void SX127X::registerSpiTransfer(void (*func)(uint8_t, uint8_t *, size_t)) {
     this->spiTransfer               = func;
     this->flags.single.has_transfer = true;
@@ -61,6 +68,12 @@ void SX127X::registerSpiTransfer(void (*func)(uint8_t, uint8_t *, size_t)) {
 
 
 uint8_t SX127X::begin(uint16_t frequency, uint8_t sync_word, uint16_t preamble_len) {
+    //check that all required callbacks were set
+    if (!this->flags.single.has_pin_write ||
+        !this->flags.single.has_transfer  ||
+        !this->flags.single.has_delay)
+        return ERR_MISSING_CALLBACK;
+
     //toggle pin modes if it was setup
     if (this->flags.single.has_pin_mode) {
         pinMode(cs, output);
@@ -68,51 +81,26 @@ uint8_t SX127X::begin(uint16_t frequency, uint8_t sync_word, uint16_t preamble_l
         pinMode(dio0, input);
     }
 
-    //check that all required callbacks were set
-    if (!this->flags.single.has_pin_write ||
-        !this->flags.single.has_transfer ||
-        !this->flags.single.has_delay)
-        return 1;   //TODO return values
-
     //set pins to their default state
     pinWrite(this->cs, this->high);
     pinWrite(this->rst, this->high);
 
-    //check chip type/version
-    //TODO extend for all versions
-    //this->chip_version = getVersion();
-    //if (chip_version != SX1272_CHIP_VERSION &&
-    //    chip_version != SX1276_CHIP_VERSION && 
-    //    chip_version != RFM95_CHIP_VERSION && 
-    //    chip_version != RFM69_CHIP_VERSION) {
-    //    return 2;
-    //}
 
-    float freq   = 434.0F;
-    float bw     = 125.0F;
-    uint8_t sf   = 7U;
-    uint8_t cr   = 7U;
+    //check chip type/version
+    this->chip_version = getVersion();
+    switch (chip_version) {
+        case SX1272_CHIP_VERSION:
+        case SX1276_CHIP_VERSION:
+        case RFM95_CHIP_VERSION:
+        case RFM69_CHIP_VERSION: break;
+        default: return ERR_INVALID_CHIP_VERSION;
+    }
 
     //go to standby to change and set default settings
     setMode(SX127X_OP_MODE_STANDBY);
 
     //set lora mode
-    //TODO check reg version for all chips
-    //TODO implement FSK
     setModemMode(SX127X_MODEM_LORA);
-
-    //TODO current limit
-    setCurrentLimit(100);
-
-    //module I have does not have RFO pin connected
-    //so let's just enable PA_BOOST and set lowest possible power
-    //TODO power
-    writeRegister(REG_PA_CONFIG, SX127X_PA_SELECT_BOOST);
-
-    //enable automatic gain control
-    //TODO gain
-    setGain(SX127X_LNA_GAIN_AUTOMATIC);
-    setRegister(REG_MODEM_CONFIG_3, LORA_AGC_AUTO_ON, 2, 2);
 
     //set LoRa sync word
     setSyncWord(sync_word);
@@ -120,7 +108,6 @@ uint8_t SX127X::begin(uint16_t frequency, uint8_t sync_word, uint16_t preamble_l
     //set preamble length
     setPreambleLength(preamble_len);
 
-    //set default settings
     //turn off frequency hopping
     setFrequencyHopping(0);
 
@@ -135,6 +122,15 @@ uint8_t SX127X::begin(uint16_t frequency, uint8_t sync_word, uint16_t preamble_l
 
     //set error coding rate to 4/5
     setCodingRate(LORA_CODING_RATE_4_5);
+
+    //set automatic gain
+    setGain(SX127X_LNA_GAIN_AUTOMATIC);
+
+    //set default current limit
+    setCurrentLimit(100);
+
+    //set some power output
+    setPower(13);
 
     //enable crc
     //TODO CRC
@@ -179,9 +175,6 @@ uint8_t SX127X::getModemMode() {
     return readRegister(REG_OP_MODE, 7, 7);
 }
 
-void SX127X::setFrequencyHopping(uint8_t period) {
-    writeRegister(REG_HOP_PERIOD, HOP_PERIOD_OFF);
-}
 
 void SX127X::setSyncWord(uint8_t sync_word) {
     writeRegister(REG_SYNC_WORD, sync_word);
@@ -196,22 +189,37 @@ uint8_t SX127X::setPreambleLength(uint16_t preamble_len) {
     return 0;
 }
 
+uint8_t SX127X::setFrequency(uint16_t frequency) {
+    //TODO check frequency range based on selected module
+
+    //go to standby first
+    setMode(SX127X_OP_MODE_STANDBY);
+
+    //calculate new frequency reg value and set it
+    uint32_t f_rf = frequency * ((uint32_t(1) << 19) / 32);
+    setRegister(REG_FRF_MSB, f_rf >> 16);
+    setRegister(REG_FRF_MID, f_rf >> 8);
+    setRegister(REG_FRF_LSB, f_rf);
+
+    return 0;
+}
+
 uint8_t SX127X::setBandwidth(uint8_t bandwidth) {
     //TODO check modem type
     if (getModemMode() != SX127X_MODEM_LORA)
         return ERR_INVALID_MODEM_MODE;
 
     switch (bandwidth) {
-        case LORA_BANDWIDTH_7_8kHz   : this->bw =   7.8;  break;
-        case LORA_BANDWIDTH_10_4kHz  : this->bw =  10.4;  break;
-        case LORA_BANDWIDTH_15_6kHz  : this->bw =  15.6;  break;
-        case LORA_BANDWIDTH_20_8kHz  : this->bw =  20.8;  break;
-        case LORA_BANDWIDTH_31_25kHz : this->bw =  31.25; break;
-        case LORA_BANDWIDTH_41_7kHz  : this->bw =  41.7;  break;
-        case LORA_BANDWIDTH_62_5kHz  : this->bw =  62.5;  break;
-        case LORA_BANDWIDTH_125kHz   : this->bw = 125.0;  break;
-        case LORA_BANDWIDTH_250kHz   : this->bw = 250.0;  break;
-        case LORA_BANDWIDTH_500kHz   : this->bw = 500.0;  break;
+        case LORA_BANDWIDTH_7_8kHz:   this->bw =   7.8;  break;
+        case LORA_BANDWIDTH_10_4kHz:  this->bw =  10.4;  break;
+        case LORA_BANDWIDTH_15_6kHz:  this->bw =  15.6;  break;
+        case LORA_BANDWIDTH_20_8kHz:  this->bw =  20.8;  break;
+        case LORA_BANDWIDTH_31_25kHz: this->bw =  31.25; break;
+        case LORA_BANDWIDTH_41_7kHz:  this->bw =  41.7;  break;
+        case LORA_BANDWIDTH_62_5kHz:  this->bw =  62.5;  break;
+        case LORA_BANDWIDTH_125kHz:   this->bw = 125.0;  break;
+        case LORA_BANDWIDTH_250kHz:   this->bw = 250.0;  break;
+        case LORA_BANDWIDTH_500kHz:   this->bw = 500.0;  break;
         default: return ERR_INVALID_BANDWIDTH;  //TODO return types
     }
 
@@ -220,11 +228,6 @@ uint8_t SX127X::setBandwidth(uint8_t bandwidth) {
     //check and enable/disable LDRO
     setLowDataRateOptimalization();
     return 0;
-}
-
-
-uint32_t SX127X::getBandwidth() {
-    return uint32_t(bw * 1000);
 }
 
 uint8_t SX127X::setSpreadingFactor(uint8_t spreading_factor) {
@@ -263,21 +266,6 @@ uint8_t SX127X::setSpreadingFactor(uint8_t spreading_factor) {
     return 0;
 }
 
-uint8_t SX127X::setFrequency(uint16_t frequency) {
-    //TODO check frequency range based on selected module
-
-    //go to standby first
-    setMode(SX127X_OP_MODE_STANDBY);
-
-    //calculate new frequency reg value and set it
-    uint32_t f_rf = frequency * ((uint32_t(1) << 19) / 32);
-    setRegister(REG_FRF_MSB, f_rf >> 16);
-    setRegister(REG_FRF_MID, f_rf >> 8);
-    setRegister(REG_FRF_LSB, f_rf);
-
-    return 0;
-}
-
 uint8_t SX127X::setCodingRate(uint8_t coding_rate) {
     if (getModemMode() != SX127X_MODEM_LORA)
         return ERR_INVALID_MODEM_MODE;
@@ -290,24 +278,9 @@ uint8_t SX127X::setCodingRate(uint8_t coding_rate) {
         default: return ERR_INVALID_CODING_RATE;
     }
 
-    this->cr = (coding_rate + 0b00001000) >> 1;
+    //this->cr = (coding_rate + 0b00001000) >> 1;
     setRegister(REG_MODEM_CONFIG_1, coding_rate, 1, 3);
-    return 0;
-}
 
-uint8_t SX127X::setCurrentLimit(uint8_t max_current) {
-    if ((max_current < 45 || max_current > 240) && max_current != 0)
-        return ERR_INVALID_CURRENT_LIMIT;
-
-    setMode(SX127X_OP_MODE_STANDBY);
-
-    //disable OCP
-    if (max_current == 0)
-        setRegister(REG_OCP, OCP_OFF, 5, 5);
-    if (max_current <= 120)
-        setRegister(REG_OCP, ((max_current - 45) / 5) | OCP_ON, 0, 5);
-    else if (max_current <= 240)
-        setRegister(REG_OCP, ((max_current + 30) / 10) | OCP_ON, 0, 5);
     return 0;
 }
 
@@ -317,8 +290,7 @@ uint8_t SX127X::setGain(uint8_t gain) {
 
     setMode(SX127X_OP_MODE_STANDBY);
 
-    //TODO FSK
-    //get mode
+    //TODO FSK //get mode
 
     //set automatic gain control
     if (gain == 0)
@@ -331,46 +303,82 @@ uint8_t SX127X::setGain(uint8_t gain) {
     return 0;
 }
 
-//TODO
-void SX127X::setPower(int8_t power, bool pa_boost) {
-    if (pa_boost && (power < 2 || power > 17))
-        return ERR_INVALID_POWER;
-    if (!pa_boost && (power < -4 || power > 15))
-        return ERR_INVALID_POWER;
-
-    setMode(SX127X_OP_MODE_STANDBY);
-
-    if (pa_boost) {
-        if (power == 20) {
-            setRegister(REG_PA_CONFIG, SX127X_PA_SELECT_BOOST | )
-            setRegister(REG_PA_DAC, SX127X_PA_SELECT_BOOST)
-        }
-        else {
-
-        }
-    }
-    else {
-
-    }
-}
-
-void SX127X::setCRC(bool enable) {
-    //TODO FSK
-    if (getModemMode() != SX127X_MODEM_LORA)
-        return;
+uint8_t SX127X::setCRC(bool enable) {
+    //TODO FSK //check modem
     
     if(enable)
         setRegister(REG_MODEM_CONFIG_2, LORA_RX_PAYLOAD_CRC_ON, 2, 2);
     else
         setRegister(REG_MODEM_CONFIG_2, LORA_RX_PAYLOAD_CRC_OFF, 2, 2);
+    
+    return 0;
 }
 
 void SX127X::setLowDataRateOptimalization() {
-    this->ts = float(uint16_t(1) << this->sf) / this->bw;
-    if(this->ts >= 16.0)
+    float ts = float(uint16_t(1) << this->sf) / this->bw;
+    if(ts >= 16.0)
         setRegister(REG_MODEM_CONFIG_3, LORA_LOW_DATA_RATE_OPT_ON, 3, 3);
     else
         setRegister(REG_MODEM_CONFIG_3, LORA_LOW_DATA_RATE_OPT_OFF, 3, 3);
+}
+
+void SX127X::setFrequencyHopping(uint8_t period) {
+    writeRegister(REG_HOP_PERIOD, HOP_PERIOD_OFF);
+}
+
+
+uint8_t SX127X::setCurrentLimit(uint8_t max_current) {
+    if ((max_current < 45 || max_current > 240) && max_current != 0)
+        return ERR_INVALID_CURRENT_LIMIT;
+
+    setMode(SX127X_OP_MODE_STANDBY);
+
+    //disable OCP
+    if (max_current == 0)
+        setRegister(REG_OCP, SX127X_OCP_OFF, 5, 5);
+    if (max_current <= 120)
+        setRegister(REG_OCP, ((max_current - 45) / 5) | SX127X_OCP_ON, 0, 5);
+    else if (max_current <= 240)
+        setRegister(REG_OCP, ((max_current + 30) / 10) | SX127X_OCP_ON, 0, 5);
+
+    return 0;
+}
+
+uint8_t SX127X::setPower(int8_t power, bool pa_boost) {
+    if (pa_boost && power != 20 && (power < 2 || power > 17))
+        return ERR_INVALID_POWER;
+    if (!pa_boost && (power < -4 || power > 15))
+        return ERR_INVALID_POWER;
+
+    uint8_t pa_config = 0;
+    setMode(SX127X_OP_MODE_STANDBY);
+
+    //using PA_BOOST pin
+    if (pa_boost) {
+        //calculate correct register value for specified power
+        if (power == 20)
+            pa_config = SX127X_PA_SELECT_BOOST | 0b01110000 | 0b00001111;
+        else 
+            pa_config = SX127X_PA_SELECT_BOOST | 0b01110000 | (power - 2);
+        writeRegister(REG_PA_CONFIG, pa_config);
+        setRegister(REG_PA_DAC, SX127X_PA_BOOST_ON, 0, 2);
+    }
+    //using RFO pin
+    else {
+        //calculate correct register value for specified power.
+        //Is shifted by -0.2dBm for -4dBm (-4.2dBm)
+        if (power == -4)
+            pa_config = SX127X_PA_SELECT_RFO | 0b00000000 | (power + 4);    //TODO macro for this power value?
+        //get rid of the 0.2 offset
+        else if (power < 0)
+            pa_config = SX127X_PA_SELECT_RFO | 0b00100000 | (power + 3);
+        else
+            pa_config = SX127X_PA_SELECT_RFO | 0b01110000 | power;
+        writeRegister(REG_PA_CONFIG, pa_config);
+        setRegister(REG_PA_DAC, SX127X_PA_BOOST_OFF, 0, 2);
+    }
+
+    return 0;
 }
 
 
@@ -405,6 +413,9 @@ uint8_t SX127X::transmit(uint8_t *data, uint8_t length) {
     return reg;
 }
 
+uint8_t SX127X::receive(uint8_t *data) {
+    
+}
 
 void SX127X::SPIMakeTransaction(uint8_t addr, uint8_t *data, size_t length) {
     if (this->flags.single.has_spi_start_tr)
