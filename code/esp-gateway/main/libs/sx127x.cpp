@@ -10,6 +10,7 @@
  */
 
 #include "sx127x.hpp"
+#include <esp_log.h>
 
 
 static const char* TAG = "sx127x";
@@ -160,10 +161,6 @@ uint8_t SX127X::begin(float frequency, uint8_t sync_word, uint16_t preamble_len)
     //enable crc
     setCRC(true);
 
-    //disable all IO pins
-    //writeRegister(REG_DIO_MAPPING_1, 0xFF);
-    //setRegister(REG_DIO_MAPPING_2, 0b11110000);
-
     return 0;
 }
 
@@ -180,7 +177,14 @@ uint8_t SX127X::getVersion() {
 }
 
 void SX127X::setMode(uint8_t mode) {
+    //skip going into standby (most used mode) when already in standby
+    if (mode == SX127X_OP_MODE_STANDBY && this->in_standby)
+        return;
+
     setRegister(REG_OP_MODE, mode, 0, 2);
+
+    //save if in standby
+    this->in_standby = mode == SX127X_OP_MODE_STANDBY;
 }
 
 void SX127X::setModemMode(uint8_t modem) {
@@ -533,7 +537,7 @@ uint8_t SX127X::transmit(uint8_t *data, uint8_t length) {
     while(!this->pinRead(this->dio0));
 
     //sometimes, just waiting for the gpio is not enough, so check the IRQ flags
-    while(!(readRegister(REG_IRQ_FLAGS) & 0b00001000));
+    //while(!(readRegister(REG_IRQ_FLAGS) & 0b00001000));
 
     //go back to standby
     setMode(SX127X_OP_MODE_STANDBY);
@@ -550,7 +554,7 @@ uint8_t SX127X::receive(uint8_t *data, uint8_t length) {
     setMode(SX127X_OP_MODE_STANDBY);
 
     //apply errata fixes
-    errataFix(true);
+    //errataFix(true);
 
     //set IO mapping
     setRegister(REG_DIO_MAPPING_1, DIO0_LORA_RX_DONE | DIO1_LORA_RX_TIMEOUT, 4, 7);
@@ -566,12 +570,12 @@ uint8_t SX127X::receive(uint8_t *data, uint8_t length) {
     setRegister(REG_FIFO_RX_BASE_ADDR, 0);  //where to start storing new data
     setRegister(REG_FIFO_ADDR_PTR, 0);      //from where to read on reception
 
-    //calcualte timeout (us)
-    uint32_t timeout = (symbol_cnt * float(uint16_t(1) << this->sf) / this->bw) * 1000;
-    uint8_t status = 0;
-
     //start receiving
     setMode(SX127X_OP_MODE_RXSINGLE);
+
+    uint8_t status = 0;
+    //calcualte timeout (us)
+    uint32_t timeout = (symbol_cnt * float(uint16_t(1) << this->sf) / this->bw) * 1000;
     uint32_t start = this->micros(); 
 
     //wait for successful reception or exit on timeout
@@ -610,8 +614,10 @@ uint8_t SX127X::receive(uint8_t *data, uint8_t length) {
         if (this->sf != 6)
             payload_length = readRegister(REG_RX_NB_BYTES);
                 
-        if (length > payload_length)
+        if (length > payload_length || length == 0)
             length = payload_length;
+
+        ESP_LOGI(TAG, "Packet length: %d", length);
 
         readRegistersBurst(REG_FIFO, data, length);
     }

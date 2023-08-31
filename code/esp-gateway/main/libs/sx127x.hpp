@@ -328,6 +328,7 @@ private:
     uint8_t sf          = LORA_SPREADING_FACTOR_7 >> 4;// 7;    //spreading factor
     float bw            = 125.0;  //bandwidth in kHz
     uint16_t symbol_cnt = 100;
+    uint8_t in_standby  = false;
 
 
     void (*pinMode)(uint8_t pin, uint8_t mode);
