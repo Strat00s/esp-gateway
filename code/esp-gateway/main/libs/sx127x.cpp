@@ -550,7 +550,7 @@ uint8_t SX127X::transmit(uint8_t *data, uint8_t length) {
 
 //TODO hop
 //TODO continuous
-uint8_t SX127X::receive(uint8_t *data, uint8_t length) {
+uint8_t SX127X::receiveBlocking(uint8_t *data, uint8_t length) {
     setMode(SX127X_OP_MODE_STANDBY);
 
     //apply errata fixes
@@ -602,27 +602,73 @@ uint8_t SX127X::receive(uint8_t *data, uint8_t length) {
     setMode(SX127X_OP_MODE_STANDBY);
 
     //check CRC
-    if (readRegister(REG_IRQ_FLAGS, 5, 5) == 0b00100000)
+    if (readRegister(REG_IRQ_FLAGS, 5, 5) == 0b00100000)    //TODO name the value
         status = ERR_CRC_MISMATCH;
 
     //clear IRQ flags
     writeRegister(REG_IRQ_FLAGS, 0xFF);
 
     //read data on success
-    if (!status) {
-        uint8_t payload_length = length;
-        if (this->sf != 6)
-            payload_length = readRegister(REG_RX_NB_BYTES);
-                
-        if (length > payload_length || length == 0)
-            length = payload_length;
-
-        ESP_LOGI(TAG, "Packet length: %d", length);
-
-        readRegistersBurst(REG_FIFO, data, length);
-    }
+    if (!status)
+        getData(data, length);
 
     return status;
+}
+
+void SX127X::receiveNonBlockingStart(uint8_t length) {
+    setMode(SX127X_OP_MODE_STANDBY);
+
+    //apply errata fixes
+    //errataFix(true);
+
+    //set IO mapping
+    setRegister(REG_DIO_MAPPING_1, DIO0_LORA_RX_DONE | DIO1_LORA_RX_TIMEOUT, 4, 7);
+
+    //when using SF6, payload length must be know in advance
+    if (this->sf == 6)
+        setRegister(REG_PAYLOAD_LENGTH, length);
+
+    //clear interrupt flags
+    writeRegister(REG_IRQ_FLAGS, 0xFF);
+
+    //set FIFO pointers (all 256 bytes used for RX)
+    setRegister(REG_FIFO_RX_BASE_ADDR, 0);  //where to start storing new data
+    setRegister(REG_FIFO_ADDR_PTR, 0);      //from where to read on reception
+
+    //start receiving
+    setMode(SX127X_OP_MODE_RXSINGLE);
+}
+
+uint8_t SX127X::receiveNonBlockingEnd() {
+    //go back to standby
+    setMode(SX127X_OP_MODE_STANDBY);
+
+    uint8_t status = 0;
+
+    //check CRC
+    if (readRegister(REG_IRQ_FLAGS, 5, 5) == 0b00100000)    //TODO name the value
+        status = ERR_CRC_MISMATCH;
+
+    //clear IRQ flags
+    writeRegister(REG_IRQ_FLAGS, 0xFF);
+
+    return status;
+}
+
+void SX127X::receiveContinuous(uint8_t length) {
+    //TODO
+}
+
+
+void SX127X::getData(uint8_t *data, uint8_t length) {
+    uint8_t payload_length = length;
+    if (this->sf != 6)
+        payload_length = readRegister(REG_RX_NB_BYTES);
+            
+    if (length > payload_length || length == 0)
+        length = payload_length;
+
+    readRegistersBurst(REG_FIFO, data, length);
 }
 
 

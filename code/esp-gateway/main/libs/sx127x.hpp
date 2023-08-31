@@ -309,7 +309,7 @@ private:
     uint8_t low;
     
     union Bits {
-        char all;
+        uint8_t all;
         struct bits {
             uint8_t has_pin_mode       :1;
             uint8_t has_pin_write      :1;
@@ -325,7 +325,7 @@ private:
 
 
     float frequency     = 434.0;
-    uint8_t sf          = LORA_SPREADING_FACTOR_7 >> 4;// 7;    //spreading factor
+    uint8_t sf          = LORA_SPREADING_FACTOR_7 >> 4;
     float bw            = 125.0;  //bandwidth in kHz
     uint16_t symbol_cnt = 100;
     uint8_t in_standby  = false;
@@ -338,10 +338,13 @@ private:
     uint32_t (*micros)();
     void (*SPIBeginTransaction)();
     void (*SPIEndTransaction)();
-    /** @brief To be implemented by user. Transfer function for sending and receiveing data over SPI
+    /** @brief To be implemented by user. Transfer function for sending
+     * and receiveing data over SPI
      *
-     * @param addr Register address. MSB of the address defines if it is read or write transaction (0 for read, 1 for write)
-     * @param buffer Buffer for in/out data (contains data to be written or will be filled with read data)
+     * @param addr Register address. MSB of the address defines if it
+     * is read or write transaction (0 for read, 1 for write)
+     * @param buffer Buffer for in/out data (contains data to be written
+     * or will be filled with read data)
      * @param length Length of buffer
      */
     void (*spiTransfer)(uint8_t addr, uint8_t *buffer, size_t length);
@@ -415,14 +418,17 @@ public:
 
     /** @brief Set the sync word for keeping modules on different "networks"
      * 
-     * @param sync_word desired sync word. Can be anything. 0x12/0x1424 is default. 0x34/0x3444 is reserved for LoRaWAN.
+     * @param sync_word desired sync word. Can be anything.
+     * 0x12/0x1424 is default. 0x34/0x3444 is reserved for LoRaWAN.
      */
     void setSyncWord(uint8_t sync_word);
 
-    /** @brief Set the preamble length used to syncrhonize receiver with the incoming data
+    /** @brief Set the preamble length used to syncrhonize receiver
+     * with the incoming data
      * 
      * @param preamble_length preamble length between 6 and 65535
-     * @return 0 on success. ERR_INVALID_PREAMBLE_LEN if preamble length is less than 6.
+     * @return 0 on success. ERR_INVALID_PREAMBLE_LEN if preamble length
+     * is less than 6.
      */
     uint8_t setPreambleLength(uint16_t preamble_length);
 
@@ -430,11 +436,13 @@ public:
     /** @brief Set the module radio frequency
      * 
      * @param frequency Frequency in MHz
-     * @return 0 on success, ERR_INVALID_FREQUENCY if invalid frequency is provided for current module version
+     * @return 0 on success, ERR_INVALID_FREQUENCY if invalid frequency
+     * is provided for current module version
      */
     uint8_t setFrequency(float frequency);
 
-    /** @brief Set bandwidth. If needed, enable/disable low data rate optimalization
+    /** @brief Set bandwidth. If needed, enable/disable low data
+     * rate optimalization
      * 
      * @param bandwidth desired bandwidth
      * @param LORA_BANDWIDTH_7_8kHz
@@ -447,11 +455,13 @@ public:
      * @param LORA_BANDWIDTH_125kHz
      * @param LORA_BANDWIDTH_250kHz
      * @param LORA_BANDWIDTH_500kHz
-     * @return 0 on success. ERR_INVALID_MODEM_MODE if not in LoRa mode. ERR_INVALID_BANDWIDTH if invalid bandwidth is provided.
+     * @return 0 on success. ERR_INVALID_MODEM_MODE if not in LoRa mode.
+     * ERR_INVALID_BANDWIDTH if invalid bandwidth is provided.
      */
     uint8_t setBandwidth(uint8_t bandwidth);
 
-    /** @brief Set spreading factor. If needed, enable/disable low data rate optimalization
+    /** @brief Set spreading factor. If needed, enable/disable
+     * low data rate optimalization
      * 
      * @param spreading_factor desired spreading factor
      * @param LORA_SPREADING_FACTOR_6 
@@ -461,7 +471,8 @@ public:
      * @param LORA_SPREADING_FACTOR_10
      * @param LORA_SPREADING_FACTOR_11
      * @param LORA_SPREADING_FACTOR_12
-     * @return 0 on success. ERR_INVALID_MODEM_MODE if not in LoRa mode. ERR_INVALID_SPREADING_FACTOR if invalid spreading factor is provided.
+     * @return 0 on success. ERR_INVALID_MODEM_MODE if not in LoRa mode.
+     * ERR_INVALID_SPREADING_FACTOR if invalid spreading factor is provided.
      */
     uint8_t setSpreadingFactor(uint8_t spreading_factor);
 
@@ -472,11 +483,13 @@ public:
      * @param LORA_CODING_RATE_4_6
      * @param LORA_CODING_RATE_4_7
      * @param LORA_CODING_RATE_4_8
-     * @return 0 on success. ERR_INVALID_MODEM_MODE if not in LoRa mode. ERR_INVALID_CODING_RATE if invalid coding rate is provided.
+     * @return 0 on success. ERR_INVALID_MODEM_MODE if not in LoRa mode.
+     * ERR_INVALID_CODING_RATE if invalid coding rate is provided.
      */
     uint8_t setCodingRate(uint8_t coding_rate);
 
-    /** @brief Set the receiver Low-Noise Amplifier gain. G1 is the highest and G6 is the lowest.
+    /** @brief Set the receiver Low-Noise Amplifier gain. 
+     * G1 is the highest and G6 is the lowest.
      * 
      * @param gain Desired gain setting. Automatic is recommended (default)
      * @param SX127X_LNA_GAIN_AUTOMATIC
@@ -486,7 +499,7 @@ public:
      * @param SX127X_LNA_GAIN_G4
      * @param SX127X_LNA_GAIN_G5
      * @param SX127X_LNA_GAIN_G6
-     * @return uint8_t 
+     * @return uint8_t //TODO
      */
     uint8_t setGain(uint8_t gain);
 
@@ -496,9 +509,9 @@ public:
      */
     uint8_t setCRC(bool enable);
 
-    /** @brief Enable low data rate optimalization if symbol length exceeds 16ms, disable otherwise.
-    *
-    */
+    /** @brief Enable low data rate optimalization if symbol
+     * length exceeds 16ms, disable otherwise.
+     */
     void setLowDataRateOptimalization();
 
     //TODO proper description
@@ -508,26 +521,31 @@ public:
      */
     void setFrequencyHopping(uint8_t period);
 
-    /**
-     * @brief Set timeout period when in single receive mode. 
+    /** @brief Set timeout period when in single receive mode. 
      * When invalid symbol count is provided, the function will return 
      * a warning and set a default timeout of 100 symbols 
      * 
-     * @param symbol_cnt Number of symbols to wait before timeout. Minimum is 4, maximum 1023
-     * @return 0 on success. WARN_INVALID_SYMBOL_CNT when invalid symbol count is provided.
+     * @param symbol_cnt Number of symbols to wait before timeout.
+     * Minimum is 4, maximum 1023
+     * @return 0 on success. WARN_INVALID_SYMBOL_CNT when invalid symbol
+     * count is provided.
      */
     uint8_t setRxTimeout(uint16_t symbol_cnt);
 
 
-    /** @brief Set the current limit of the module's power amplifier. Minimum is 45mA, maximum 240mA.
-     *  5mA steps between 45mA to 120mA. 10mA steps between 120mA and 240mA. Set to 0 to disable overload current protection.
+    /** @brief Set the current limit of the module's power amplifier.
+     *  Minimum is 45mA, maximum 240mA.
+     *  5mA steps between 45mA to 120mA. 10mA steps between 120mA
+     *  and 240mA. Set to 0 to disable overload current protection.
      * 
-     * @param max_current maximum current drain of the power amplifier (if the module has one).
+     * @param max_current maximum current drain of the power amplifier
+     * (if the module has one).
      * @return ERR_INVALID_CURRENT_LIMIT if invalid current value is provided
      */
     uint8_t setCurrentLimit(uint8_t max_current);
 
-    /** @brief Set the module output power. Some modules do not have RFO pin connected and only use PA_BOOSt pin.
+    /** @brief Set the module output power. Some modules do not
+     *  have RFO pin connected and only use PA_BOOSt pin.
      * 
      * @param power Desired power from -4dBm to 15dBm when using RFO. From 2dBm to 17dBm or 20dBm when using PA_BOOST.
      * @param pa_boost Wheter to use PA_BOOST pin or RFO pin.
@@ -549,13 +567,53 @@ public:
     uint8_t transmit(uint8_t *data, uint8_t length);
 
     //TODO finish
-    /** @brief Polling data receive. Requires `micros` callback.
+    /** @brief Blocking data receive. Requires `micros` callback.
      * 
-     * @param data Buffer to which to store the data (must be at least as long as the received data length)
-     * @param length Length of data to be received. Only used when using lowest possible spreading factor LORA_SPREADING_FACTOR_6
-     * @return 0 on succesfull reception. ERR_RX_TIMEOUT when reception timeout occures.
+     * @param data Buffer to which to store the data (must be at least
+     * as long as the received data length)
+     * @param length Length of data to be received. Only used when using
+     * lowest possible spreading factor LORA_SPREADING_FACTOR_6
+     * @return 0 on succesfull reception. ERR_RX_TIMEOUT when 
+     * reception timeout occures.
      */
-    uint8_t receive(uint8_t* data, uint8_t length = 0);
+    uint8_t receiveBlocking(uint8_t* data, uint8_t length = 0);
+
+    /**
+     * @brief Non-blocking data receive, becasue user must implement
+     * their own interrupt routine for pins and timer  (or some other method).
+     * Use `receiveNonBlockingEnd()` for "cleanup" and payload check.
+     * Use `getData()` to read data from FIFO after successful receive.
+     * 
+     * @param length Length of data to be received. Only used when using
+     * lowest possible spreading factor LORA_SPREADING_FACTOR_6
+     */
+    void receiveNonBlockingStart(uint8_t length = 0);
+
+    /**
+     * @brief Cleanup helper function for "non-blocking" receive
+     * 
+     * @return 0 on success. ERR_CRC_MISMATCH when CRC check fails.
+     */
+    uint8_t receiveNonBlockingEnd();
+
+    /** @brief Continuous non-blocking receive. User must implement
+     * their own interrupt routine (or some other method) for checking
+     * DIO0 pin status.
+     * 
+     * @param length 
+     * @return 
+     */
+    void receiveContinuous(uint8_t length = 0);
+
+
+    /** @brief Read received data from FIFO
+     * 
+     * @param data Buffer to which to store the data (must be at least
+     * as long as the received data length)
+     * @param length Length of data to be received. Only used when using
+     * lowest possible spreading factor LORA_SPREADING_FACTOR_6
+     */
+    void getData(uint8_t *data, uint8_t length = 0);
 
 
     /** @brief Make entire SPI transaction 
@@ -566,7 +624,9 @@ public:
      */
     void SPIMakeTransaction(uint8_t addr, uint8_t *data, size_t length = 1);
     
-    /** @brief Read single register from the module. If only specific range change is required, use mask_xsb arguments to specify a mask of bits which will be kept from the register
+    /** @brief Read single register from the module. If only specific
+     * range change is required, use mask_xsb arguments to specify
+     * a mask of bits which will be kept from the register
      * 
      * @param addr Register address to be read from
      * @param mask_lsb LSB mask bit
@@ -598,7 +658,10 @@ public:
      */
     void writeRegistersBurst(uint8_t addr, uint8_t *data, size_t length);
     
-    /** @brief Set register to a specific value. If only a specific range change is required, use mask_xsb arguments to specify a mask o bits which will be overwriten in the register (the rest of the register will remain the same).
+    /** @brief Set register to a specific value. If only a specific range
+     * change is required, use mask_xsb arguments to specify a mask o bits
+     * which will be overwriten in the register (the rest of the register
+     * will remain the same).
      * 
      * @param addr Register address to set
      * @param data Data to write
