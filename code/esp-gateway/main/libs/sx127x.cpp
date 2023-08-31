@@ -39,6 +39,7 @@ SX127X::~SX127X() {
 
 }
 
+
 //callback functions
 void SX127X::registerPinMode(void (*func)(uint8_t, uint8_t), uint8_t input, uint8_t output) {
     this->pinMode                   = func;
@@ -64,6 +65,10 @@ void SX127X::registerDelay(void (*func)(uint32_t)) {
     this->flags.single.has_delay = true;
 }
 
+void SX127X::registerMicros(uint32_t (*micros)()) {
+    this->micros = micros;
+    this->flags.single.has_micros = true;
+}
 
 void SX127X::registerSPIStartTransaction(void (*func)()) {
     this->SPIBeginTransaction           = func;
@@ -85,6 +90,7 @@ uint8_t SX127X::begin(float frequency, uint8_t sync_word, uint16_t preamble_len)
     //check that all required callbacks were set
     if (!this->flags.single.has_pin_write ||
         !this->flags.single.has_transfer  ||
+        !this->flags.single.has_micros    ||
         !this->flags.single.has_delay)
         return ERR_MISSING_CALLBACK;
 
@@ -126,6 +132,9 @@ uint8_t SX127X::begin(float frequency, uint8_t sync_word, uint16_t preamble_len)
 
     //turn off frequency hopping
     setFrequencyHopping(0);
+
+    //set default rx timeout
+    setRxTimeout(100);
 
     //set frequency
     setFrequency(frequency);
@@ -338,6 +347,21 @@ void SX127X::setFrequencyHopping(uint8_t period) {
     writeRegister(REG_HOP_PERIOD, HOP_PERIOD_OFF);
 }
 
+uint8_t SX127X::setRxTimeout(uint16_t symbol_cnt) {
+    uint8_t status = 0;
+    if (symbol_cnt < 4 || symbol_cnt > 1023) {
+        status = WARN_INVALID_TIMEOUT_SYMBOL_CNT;
+        symbol_cnt = 100;
+    }
+    
+    writeRegister(REG_SYMB_TIMEOUT_LSB, symbol_cnt);
+    setRegister(REG_MODEM_CONFIG_2, symbol_cnt >> 8, 0, 1);
+
+    this->symbol_cnt = symbol_cnt;
+
+    return status;
+}
+
 
 uint8_t SX127X::setCurrentLimit(uint8_t max_current) {
     if ((max_current < 45 || max_current > 240) && max_current != 0)
@@ -481,7 +505,6 @@ void SX127X::errataFix(bool receive) {
 
 
 uint8_t SX127X::transmit(uint8_t *data, uint8_t length) {
-    //TODO time on air and timeout
     setMode(SX127X_OP_MODE_STANDBY);
 
     //apply errata fixes
@@ -522,18 +545,17 @@ uint8_t SX127X::transmit(uint8_t *data, uint8_t length) {
 }
 
 //TODO hop
+//TODO continuous
 uint8_t SX127X::receive(uint8_t *data, uint8_t length) {
     setMode(SX127X_OP_MODE_STANDBY);
 
     //apply errata fixes
     errataFix(true);
 
-    //TODO other pins
     //set IO mapping
     setRegister(REG_DIO_MAPPING_1, DIO0_LORA_RX_DONE | DIO1_LORA_RX_TIMEOUT, 4, 7);
 
-    uint8_t packet_length = length;
-
+    //when using SF6, payload length must be know in advance
     if (this->sf == 6)
         setRegister(REG_PAYLOAD_LENGTH, length);
 
@@ -541,16 +563,60 @@ uint8_t SX127X::receive(uint8_t *data, uint8_t length) {
     writeRegister(REG_IRQ_FLAGS, 0xFF);
 
     //set FIFO pointers (all 256 bytes used for RX)
-    setRegister(REG_FIFO_RX_BASE_ADDR, 0);
-    setRegister(REG_FIFO_ADDR_PTR, 0);
+    setRegister(REG_FIFO_RX_BASE_ADDR, 0);  //where to start storing new data
+    setRegister(REG_FIFO_ADDR_PTR, 0);      //from where to read on reception
 
-    //TODO continuous
+    //calcualte timeout (us)
+    uint32_t timeout = (symbol_cnt * float(uint16_t(1) << this->sf) / this->bw) * 1000;
+    uint8_t status = 0;
+
+    //start receiving
     setMode(SX127X_OP_MODE_RXSINGLE);
+    uint32_t start = this->micros(); 
 
-    //TODO other pins (timeout only when DIO1 is not used)
-    uint32_t timeout = 100 * float(uint16_t(1) << this->sf) / this->bw;
+    //wait for successful reception or exit on timeout
+    while (!this->pinRead(this->dio0)) {
+        //has dio1
+        if (this->dio1 != 0) {
+            //timeout on dio1
+            if (this->pinRead(this->dio1)) {
+                status = ERR_RX_TIMEOUT;
+                break;
+            }
+        }
+        //no dio1
+        else {
+            //timeout from timer
+            if (this->micros() - start > timeout) {
+                status = ERR_RX_TIMEOUT;
+                break;
+            }
+        }
+    }
 
-    //TODO finish
+    //go back to standby
+    setMode(SX127X_OP_MODE_STANDBY);
+
+    //check CRC
+    if (readRegister(REG_IRQ_FLAGS, 5, 5) == 0b00100000)
+        status = ERR_CRC_MISMATCH;
+
+    //clear IRQ flags
+    writeRegister(REG_IRQ_FLAGS, 0xFF);
+
+    //read data on success
+    if (!status) {
+        uint8_t payload_length = length;
+        if (this->sf != 6)
+            payload_length = readRegister(REG_RX_NB_BYTES);
+                
+        if (length > payload_length)
+            length = payload_length;
+
+        readRegistersBurst(REG_FIFO, data, length);
+    }
+
+    return status;
 }
 
 

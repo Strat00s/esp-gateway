@@ -213,7 +213,7 @@
 #define REG_FIFO_RX_CURRENT_ADDR                0x10
 //                                              0x11
 #define REG_IRQ_FLAGS                           0x12
-//                                              0x13
+#define REG_RX_NB_BYTES                         0x13
 //                                              0x14
 //                                              0x15
 //                                              0x16
@@ -225,7 +225,7 @@
 //                                              0x1C
 #define REG_MODEM_CONFIG_1                      0x1D
 #define REG_MODEM_CONFIG_2                      0x1E
-//                                              0x1F
+#define REG_SYMB_TIMEOUT_LSB                    0x1F
 #define REG_PREAMBLE_MSB                        0x20
 #define REG_PREAMBLE_LSB                        0x21
 #define REG_PAYLOAD_LENGTH                      0x22
@@ -278,17 +278,20 @@
 
 
 //ERRORS
-#define ERR_INVALID_PREAMBLE_LEN     1
-#define ERR_INVALID_BANDWIDTH        2
-#define ERR_INVALID_MODEM_MODE       3
-#define ERR_INVALID_SPREADING_FACTOR 4
-#define ERR_INVALID_CODING_RATE      5
-#define ERR_INVALID_CURRENT_LIMIT    6
-#define ERR_INVALID_GAIN             7
-#define ERR_INVALID_POWER            8
-#define ERR_MISSING_CALLBACK         9
-#define ERR_INVALID_CHIP_VERSION     10 //wrong chip version was read. Check you connection.
+#define ERR_INVALID_PREAMBLE_LEN        1
+#define ERR_INVALID_BANDWIDTH           2
+#define ERR_INVALID_MODEM_MODE          3
+#define ERR_INVALID_SPREADING_FACTOR    4
+#define ERR_INVALID_CODING_RATE         5
+#define ERR_INVALID_CURRENT_LIMIT       6
+#define ERR_INVALID_GAIN                7
+#define ERR_INVALID_POWER               8
+#define ERR_MISSING_CALLBACK            9
+#define ERR_INVALID_CHIP_VERSION        10 //wrong chip version was read. Check you connection.
+#define ERR_RX_TIMEOUT                  11
+#define ERR_CRC_MISMATCH                12
 
+#define WARN_INVALID_TIMEOUT_SYMBOL_CNT 1
 
 //TODO pis as int?
 class SX127X {
@@ -312,25 +315,26 @@ private:
             uint8_t has_pin_write      :1;
             uint8_t has_pin_read       :1;
             uint8_t has_delay          :1;
+            uint8_t has_micros         :1;
             uint8_t has_spi_start_tr   :1;
             uint8_t has_spi_end_tr     :1;
             uint8_t has_transfer       :1;
-            uint8_t has_burst_transfer :1;
         } single;
         Bits() {bits{false, false, false, false, false, false, false, false};}
     } flags;
 
 
-    float frequency = 434.0;
-    uint8_t sf  = LORA_SPREADING_FACTOR_7 >> 4;// 7;    //spreading factor
-    float bw    = 125.0;  //bandwidth in kHz
+    float frequency     = 434.0;
+    uint8_t sf          = LORA_SPREADING_FACTOR_7 >> 4;// 7;    //spreading factor
+    float bw            = 125.0;  //bandwidth in kHz
+    uint16_t symbol_cnt = 100;
 
 
     void (*pinMode)(uint8_t pin, uint8_t mode);
     void (*pinWrite)(uint8_t pin, uint8_t lvl);
     uint8_t (*pinRead)(uint8_t pin);
     void (*delay)(uint32_t delay_ms);
-
+    uint32_t (*micros)();
     void (*SPIBeginTransaction)();
     void (*SPIEndTransaction)();
     /** @brief To be implemented by user. Transfer function for sending and receiveing data over SPI
@@ -354,7 +358,7 @@ public:
     void registerPinWrite(void (*func)(uint8_t, uint8_t), uint8_t high = 1, uint8_t low = 0);
     void registerPinRead(uint8_t (*func)(uint8_t));
     void registerDelay(void (*func)(uint32_t));
-
+    void registerMicros(uint32_t (*micros)());
     void registerSPIStartTransaction(void (*func)());
     void registerSPIEndTransaction(void (*func)());
     void registerSpiTransfer(void (*func)(uint8_t, uint8_t *, size_t));
@@ -503,6 +507,16 @@ public:
      */
     void setFrequencyHopping(uint8_t period);
 
+    /**
+     * @brief Set timeout period when in single receive mode. 
+     * When invalid symbol count is provided, the function will return 
+     * a warning and set a default timeout of 100 symbols 
+     * 
+     * @param symbol_cnt Number of symbols to wait before timeout. Minimum is 4, maximum 1023
+     * @return 0 on success. WARN_INVALID_SYMBOL_CNT when invalid symbol count is provided.
+     */
+    uint8_t setRxTimeout(uint16_t symbol_cnt);
+
 
     /** @brief Set the current limit of the module's power amplifier. Minimum is 45mA, maximum 240mA.
      *  5mA steps between 45mA to 120mA. 10mA steps between 120mA and 240mA. Set to 0 to disable overload current protection.
@@ -534,11 +548,11 @@ public:
     uint8_t transmit(uint8_t *data, uint8_t length);
 
     //TODO finish
-    /** @brief Polling data receive
+    /** @brief Polling data receive. Requires `micros` callback.
      * 
      * @param data Buffer to which to store the data (must be at least as long as the received data length)
      * @param length Length of data to be received. Only used when using lowest possible spreading factor LORA_SPREADING_FACTOR_6
-     * @return //TODO return value
+     * @return 0 on succesfull reception. ERR_RX_TIMEOUT when reception timeout occures.
      */
     uint8_t receive(uint8_t* data, uint8_t length = 0);
 
