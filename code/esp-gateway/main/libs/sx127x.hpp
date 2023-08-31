@@ -15,6 +15,7 @@
 //TODO add all registers
 //TODO return values
 //TODO FSK
+//TODO HOP
 
 
 #pragma once
@@ -91,8 +92,8 @@
 #define SX127X_OP_MODE_CAD          0b00000111
 
 //modem modes
-#define SX127X_MODEM_FSK_OOK    0b00000000
-#define SX127X_MODEM_LORA       0b10000000
+#define SX127X_MODEM_MODE_FSK_OOK    0b00000000
+#define SX127X_MODEM_MODE_LORA       0b10000000
 
 //LNA gains
 #define SX127X_LNA_GAIN_AUTOMATIC 0b00000000
@@ -289,13 +290,15 @@
 #define ERR_INVALID_CHIP_VERSION     10 //wrong chip version was read. Check you connection.
 
 
+//TODO pis as int?
 class SX127X {
 private:
     uint8_t chip_version = 0;
 
-    uint8_t dio0 = 0;
     uint8_t cs   = 0;
     uint8_t rst  = 0;
+    uint8_t dio0 = 0;
+    uint8_t dio1 = 0;
 
     uint8_t input;
     uint8_t output;
@@ -318,8 +321,9 @@ private:
     } flags;
 
 
+    float frequency = 434.0;
     uint8_t sf  = LORA_SPREADING_FACTOR_7 >> 4;// 7;    //spreading factor
-    float bw    = 125;  //bandwidth in kHz
+    float bw    = 125.0;  //bandwidth in kHz
 
 
     void (*pinMode)(uint8_t pin, uint8_t mode);
@@ -337,9 +341,13 @@ private:
      */
     void (*spiTransfer)(uint8_t addr, uint8_t *buffer, size_t length);
 
+    void setValidFrequency(float frequency);
+
+
 public:
     //SX127X(uint8_t cs, uint8_t rst, uint8_t dio0);
     SX127X(uint8_t cs, uint8_t rst, uint8_t dio0);
+    SX127X(uint8_t cs, uint8_t rst, uint8_t dio0, uint8_t dio1);
     ~SX127X();
 
     void registerPinMode(void (*func)(uint8_t, uint8_t), uint8_t input, uint8_t output);
@@ -359,7 +367,7 @@ public:
      * @param preamble_len length of the preamble
      * @return uint8_t 
      */
-    uint8_t begin(uint16_t frequency, uint8_t sync_word, uint16_t preamble_len);
+    uint8_t begin(float frequency, uint8_t sync_word, uint16_t preamble_len);
 
 
     /** @brief Reset the module*/
@@ -419,7 +427,7 @@ public:
      * @param frequency Frequency in MHz
      * @return 0 on success, ERR_INVALID_FREQUENCY if invalid frequency is provided for current module version
      */
-    uint8_t setFrequency(uint16_t frequency);
+    uint8_t setFrequency(float frequency);
 
     /** @brief Set bandwidth. If needed, enable/disable low data rate optimalization
      * 
@@ -511,6 +519,10 @@ public:
      * @return 0 on success. ERR_INVALID_POWER when invalid power for specified pin is provided.
      */
     uint8_t setPower(int8_t power, bool pa_boost = true);
+
+
+    /** @brief Apply errata fix for each module*/
+    void errataFix(bool receive);
 
 
     /** @brief Transmit data and wait for the transmission to finish

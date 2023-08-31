@@ -15,10 +15,24 @@
 static const char* TAG = "sx127x";
 
 
+
+//private
+void SX127X::setValidFrequency(float frequency) {
+    uint32_t f_rf = frequency * (((uint32_t)1 << 19) / 32);
+    setRegister(REG_FRF_MSB, f_rf >> 16);
+    setRegister(REG_FRF_MID, f_rf >> 8);
+    setRegister(REG_FRF_LSB, f_rf);
+}
+
+//public
 SX127X::SX127X(uint8_t cs, uint8_t rst, uint8_t dio0) {
-    this->cs     = cs;
-    this->rst    = rst;
-    this->dio0   = dio0;
+    this->cs   = cs;
+    this->rst  = rst;
+    this->dio0 = dio0;
+}
+
+SX127X::SX127X(uint8_t cs, uint8_t rst, uint8_t dio0, uint8_t dio1) : SX127X(cs, rst, dio0) {
+    this->dio1 = dio1;
 }
 
 SX127X::~SX127X() {
@@ -67,7 +81,7 @@ void SX127X::registerSpiTransfer(void (*func)(uint8_t, uint8_t *, size_t)) {
 }
 
 
-uint8_t SX127X::begin(uint16_t frequency, uint8_t sync_word, uint16_t preamble_len) {
+uint8_t SX127X::begin(float frequency, uint8_t sync_word, uint16_t preamble_len) {
     //check that all required callbacks were set
     if (!this->flags.single.has_pin_write ||
         !this->flags.single.has_transfer  ||
@@ -76,19 +90,21 @@ uint8_t SX127X::begin(uint16_t frequency, uint8_t sync_word, uint16_t preamble_l
 
     //toggle pin modes if it was setup
     if (this->flags.single.has_pin_mode) {
-        pinMode(cs, output);
-        pinMode(rst, output);
-        pinMode(dio0, input);
+        this->pinMode(this->cs, this->output);
+        this->pinMode(this->rst, this->output);
+        this->pinMode(this->dio0, this->input);
+        if (this->dio1 != 0)
+            this->pinMode(this->dio1, this->input);
     }
 
     //set pins to their default state
-    pinWrite(this->cs, this->high);
-    pinWrite(this->rst, this->high);
+    this->pinWrite(this->cs, this->high);
+    this->pinWrite(this->rst, this->high);
 
 
     //check chip type/version
     this->chip_version = getVersion();
-    switch (chip_version) {
+    switch (this->chip_version) {
         case SX1272_CHIP_VERSION:
         case SX1276_CHIP_VERSION:
         case RFM95_CHIP_VERSION:
@@ -100,7 +116,7 @@ uint8_t SX127X::begin(uint16_t frequency, uint8_t sync_word, uint16_t preamble_l
     setMode(SX127X_OP_MODE_STANDBY);
 
     //set lora mode
-    setModemMode(SX127X_MODEM_LORA);
+    setModemMode(SX127X_MODEM_MODE_LORA);
 
     //set LoRa sync word
     setSyncWord(sync_word);
@@ -133,28 +149,24 @@ uint8_t SX127X::begin(uint16_t frequency, uint8_t sync_word, uint16_t preamble_l
     setPower(13);
 
     //enable crc
-    //TODO CRC
-    setRegister(REG_MODEM_CONFIG_2, LORA_RX_PAYLOAD_CRC_ON, 2, 2);
+    setCRC(true);
 
-    //TODO
     //disable all IO pins
-    writeRegister(REG_DIO_MAPPING_1, 0xFF);
-    setRegister(REG_DIO_MAPPING_2, 0b11110000);
+    //writeRegister(REG_DIO_MAPPING_1, 0xFF);
+    //setRegister(REG_DIO_MAPPING_2, 0b11110000);
 
     return 0;
 }
 
 
 void SX127X::reset() {
-    pinWrite(this->rst, low);
-    delay(1);
-    pinWrite(this->rst, high);
-    delay(5);
+    this->pinWrite(this->rst, this->low);
+    this->delay(1);
+    this->pinWrite(this->rst, this->high);
+    this->delay(5);
 }
 
 uint8_t SX127X::getVersion() {
-    //reset();
-    //delay(10);
     return readRegister(REG_VERSION);
 }
 
@@ -189,24 +201,24 @@ uint8_t SX127X::setPreambleLength(uint16_t preamble_len) {
     return 0;
 }
 
-uint8_t SX127X::setFrequency(uint16_t frequency) {
+uint8_t SX127X::setFrequency(float frequency) {
     //TODO check frequency range based on selected module
 
     //go to standby first
     setMode(SX127X_OP_MODE_STANDBY);
 
-    //calculate new frequency reg value and set it
-    uint32_t f_rf = frequency * ((uint32_t(1) << 19) / 32);
-    setRegister(REG_FRF_MSB, f_rf >> 16);
-    setRegister(REG_FRF_MID, f_rf >> 8);
-    setRegister(REG_FRF_LSB, f_rf);
+    //calculate and save new frequency
+    setValidFrequency(frequency);
+
+    //save the frequency
+    this->frequency = frequency;
 
     return 0;
 }
 
 uint8_t SX127X::setBandwidth(uint8_t bandwidth) {
     //TODO check modem type
-    if (getModemMode() != SX127X_MODEM_LORA)
+    if (getModemMode() != SX127X_MODEM_MODE_LORA)
         return ERR_INVALID_MODEM_MODE;
 
     switch (bandwidth) {
@@ -231,7 +243,7 @@ uint8_t SX127X::setBandwidth(uint8_t bandwidth) {
 }
 
 uint8_t SX127X::setSpreadingFactor(uint8_t spreading_factor) {
-    if (getModemMode() != SX127X_MODEM_LORA)
+    if (getModemMode() != SX127X_MODEM_MODE_LORA)
         return ERR_INVALID_MODEM_MODE;
 
     switch (spreading_factor) {
@@ -267,7 +279,7 @@ uint8_t SX127X::setSpreadingFactor(uint8_t spreading_factor) {
 }
 
 uint8_t SX127X::setCodingRate(uint8_t coding_rate) {
-    if (getModemMode() != SX127X_MODEM_LORA)
+    if (getModemMode() != SX127X_MODEM_MODE_LORA)
         return ERR_INVALID_MODEM_MODE;
 
     switch(coding_rate) {
@@ -382,9 +394,98 @@ uint8_t SX127X::setPower(int8_t power, bool pa_boost) {
 }
 
 
+void SX127X::errataFix(bool receive) {
+    if (getModemMode() != SX127X_MODEM_MODE_LORA)
+        return;
+
+    //sx1272/3 errata
+    //Receiver Spurious Reception fix
+    if (this->chip_version == SX1272_CHIP_VERSION)
+        setRegister(0x31, 0b10000000, 7, 7);
+
+    //sx1276/7/8 errata
+    if (this->chip_version == SX1278_CHIP_VERSION) {
+        //Sensitivity Optimization with a 500 kHz Bandwidth fix
+        uint8_t bandwidth = readRegister(REG_MODEM_CONFIG_1, 4, 7);
+        if (bandwidth == LORA_BANDWIDTH_500kHz) {
+            if (this->frequency >= 862.0 && this->frequency <= 1020.0) {
+                writeRegister(0x36, 0x02);
+                writeRegister(0x3A, 0x64);
+            }
+            if (this->frequency >= 410.0 && this->frequency <= 525.0) {
+                writeRegister(0x36, 0x02);
+                writeRegister(0x3A, 0x7F);
+            }
+        }
+        //reset the register back
+        else
+            writeRegister(0x36, 0x03);
+        
+        //Receiver Spurious Reception of a LoRa Signal fix
+        uint8_t reg0x31_7 = 0;
+        uint8_t reg0x2f = 0x44;
+        uint8_t reg0x30 = 0x00;
+        float new_frequency = this->frequency;
+        switch (bandwidth) {
+            case LORA_BANDWIDTH_7_8kHz:
+                reg0x2f = 0x48;
+                new_frequency += 0.00781;
+                break;
+            case LORA_BANDWIDTH_10_4kHz:
+                new_frequency += 0.01042;
+                break;
+            case LORA_BANDWIDTH_15_6kHz:
+                new_frequency += 0.01562;
+                break;
+            case LORA_BANDWIDTH_20_8kHz:
+                new_frequency += 0.02083;
+                break;
+            case LORA_BANDWIDTH_31_25kHz:
+                new_frequency += 0.03125;
+                break;
+            case LORA_BANDWIDTH_41_7kHz:
+                new_frequency += 0.04167;
+                break;
+            case LORA_BANDWIDTH_62_5kHz:
+                reg0x2f = 0x40;
+                break;
+            case LORA_BANDWIDTH_125kHz:
+                reg0x2f = 0x40;
+                break;
+            case LORA_BANDWIDTH_250kHz:
+                reg0x2f = 0x40;
+                break;
+            case LORA_BANDWIDTH_500kHz:
+                reg0x31_7 = 0b10000000;
+                reg0x2f = readRegister(0x2F);
+                reg0x30 = readRegister(0x30);
+                break;
+            default: return;
+        }
+
+        setMode(SX127X_OP_MODE_STANDBY);
+
+        //modify frequency only when receiving
+        if (receive)
+            setValidFrequency(new_frequency);
+        else
+            setValidFrequency(this->frequency);
+
+        //modify the registers
+        setRegister(0x31, reg0x31_7, 7, 7);
+        writeRegister(0x2F, reg0x2f);
+        writeRegister(0x30, reg0x30);
+    }
+
+}
+
+
 uint8_t SX127X::transmit(uint8_t *data, uint8_t length) {
     //TODO time on air and timeout
     setMode(SX127X_OP_MODE_STANDBY);
+
+    //apply errata fixes
+    errataFix(false);
 
     //set IO mapping for dio0 to be end of transmission
     setRegister(REG_DIO_MAPPING_1, DIO0_LORA_TX_DONE, 6, 7);
@@ -406,7 +507,7 @@ uint8_t SX127X::transmit(uint8_t *data, uint8_t length) {
     setMode(SX127X_OP_MODE_TX);
 
     //wait for transmission to end
-    while(!pinRead(this->dio0));
+    while(!this->pinRead(this->dio0));
 
     //sometimes, just waiting for the gpio is not enough, so check the IRQ flags
     while(!(readRegister(REG_IRQ_FLAGS) & 0b00001000));
@@ -420,19 +521,21 @@ uint8_t SX127X::transmit(uint8_t *data, uint8_t length) {
     return reg;
 }
 
+//TODO hop
 uint8_t SX127X::receive(uint8_t *data, uint8_t length) {
     setMode(SX127X_OP_MODE_STANDBY);
 
+    //apply errata fixes
+    errataFix(true);
+
     //TODO other pins
     //set IO mapping
-    setRegister(REG_DIO_MAPPING_1, DIO0_LORA_RX_DONE, 6, 7);
+    setRegister(REG_DIO_MAPPING_1, DIO0_LORA_RX_DONE | DIO1_LORA_RX_TIMEOUT, 4, 7);
 
     uint8_t packet_length = length;
 
     if (this->sf == 6)
         setRegister(REG_PAYLOAD_LENGTH, length);
-
-    //TODO errata
 
     //clear interrupt flags
     writeRegister(REG_IRQ_FLAGS, 0xFF);
@@ -450,15 +553,14 @@ uint8_t SX127X::receive(uint8_t *data, uint8_t length) {
     //TODO finish
 }
 
+
 void SX127X::SPIMakeTransaction(uint8_t addr, uint8_t *data, size_t length) {
     if (this->flags.single.has_spi_start_tr)
         this->SPIBeginTransaction();
 
-    pinWrite(this->cs, this->low);
-    
+    this->pinWrite(this->cs, this->low);
     this->spiTransfer(addr, data, length);
-    
-    pinWrite(this->cs, this->high);
+    this->pinWrite(this->cs, this->high);
 
     if (this->flags.single.has_spi_end_tr)
         this->SPIEndTransaction();
@@ -497,4 +599,3 @@ void SX127X::setRegister(uint8_t addr, uint8_t data, uint8_t mask_lsb, uint8_t m
 
     writeRegister(addr, data);
 }
-
