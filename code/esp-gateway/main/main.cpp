@@ -233,6 +233,7 @@ extern "C" void app_main() {
     lora.receiveContinuous();
 
     uint32_t start = micros();
+    uint32_t bytes_total = 0;
 
     while(true) {
         if (rx_done) {
@@ -244,18 +245,21 @@ extern "C" void app_main() {
                     case ERR_CRC_MISMATCH: printf("ERR_CRC_MISSMATCH\n"); break;
                     default: printf("UNKNOWN\n"); break;
                 }
+                lora.clearIrqFlags();
                 continue;
             }
             uint8_t payload[256] = {0};
             lora.readData(payload);
+            bytes_total += lora.getPayloadLength();
             lora.clearIrqFlags();
             printf("Received payload: %s\n", payload);
+            printf("Total bytes received: %lu\n", bytes_total);
         }
 
-        if (micros() - start > 500*1000) {
+        if (micros() - start > 1000*1000) {
             start = micros();
-            printf("STATUS LED: %d\n", pinRead(STATUS_LED));
             pinWrite(STATUS_LED, !pinRead(STATUS_LED));
+            printf("STATUS LED: %d\n", pinRead(STATUS_LED));
         }
     }
 }

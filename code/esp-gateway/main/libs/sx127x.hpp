@@ -1,12 +1,18 @@
-/**
- * @file sx127x.hpp
+/** @file sx127x.hpp
  * @author Lukáš Baštýř (l.bastyr@seznam.cz)
- * @brief 
+ * @brief SX127X library
  * @version 0.2
  * @date 30-08-2023
  * 
  * @copyright Copyright (c) 2023
  * 
+ */
+
+/*
+ * SX1272/3:     https://semtech.my.salesforce.com/sfc/p/#E0000000JelG/a/440000001NCE/v_VBhk1IolDgxwwnOpcS_vTFxPfSEPQbuneK3mWsXlU
+ * SX1276/7/8/9: https://semtech.my.salesforce.com/sfc/p/#E0000000JelG/a/2R0000001Rc1/QnUuV9TviODKUgt_rpBlPz.EZA_PNK7Rpi8HA5..Sbo
+ * HopeRF V2:    https://www.hoperf.com/data/upload/portal/20190801/RFM95W-V2.0.pdf
+ * HopeRF V1:    https://cdn.sparkfun.com/assets/learn_tutorials/8/0/4/RFM95_96_97_98W.pdf
  */
 
 
@@ -30,15 +36,17 @@
 #define SX1272_CHIP_VERSION 0x22
 #define SX1273_CHIP_VERSION 0x22
 
-#define SX1276_CHIP_VERSION 0x12
-#define SX1277_CHIP_VERSION 0x12
-#define SX1278_CHIP_VERSION 0x12
-#define SX1279_CHIP_VERSION 0x12
+#define SX1276_CHIP_VERSION  0x12
+#define SX1277_CHIP_VERSION  0x12
+#define SX1278_CHIP_VERSION  0x12
+#define SX1279_CHIP_VERSION  0x12
+#define RFM95V2_CHIP_VERSION 0x12
+#define RFM96V2_CHIP_VERSION 0x12
 
 #define RFM95_CHIP_VERSION  0x11
 #define RFM96_CHIP_VERSION  0x11
 
-#define RFM69_CHIP_VERSION  0x24
+//#define RFM69_CHIP_VERSION  0x24
 
 
 //config 1
@@ -201,8 +209,6 @@
 #define IRQ_FLAG_FHSS_CHANGE_CHANNEL      0b00000010
 #define IRQ_FLAG_CAD_DETECTED             0b00000001
 
-
-//TODO finish registers
 //SX127X registers
 #define REG_FIFO                                0x00
 #define REG_OP_MODE                             0x01
@@ -287,7 +293,7 @@
 
 
 
-//ERRORS
+//Errors
 #define ERR_INVALID_PREAMBLE_LEN        1
 #define ERR_INVALID_BANDWIDTH           2
 #define ERR_INVALID_MODEM_MODE          3
@@ -301,26 +307,31 @@
 #define ERR_RX_TIMEOUT                  11
 #define ERR_CRC_MISMATCH                12
 #define ERR_INVALID_HEADER              13
+#define ERR_INNVALID_FREQUENCY          14
 
+//Warnings
 #define WARN_INVALID_TIMEOUT_SYMBOL_CNT 1
 
-//TODO pis as int?
+
 class SX127X {
 private:
     uint8_t chip_version = 0;
 
+    //pins
     uint8_t cs   = 0;
     uint8_t rst  = 0;
     uint8_t dio0 = 0;
     uint8_t dio1 = 0;
 
+    //pin control variables
     uint8_t input;
     uint8_t output;
-    uint8_t high;
-    uint8_t low;
-    
+    uint8_t high = 1;
+    uint8_t low  = 0;
+
+    //"efficient" flags
     union Bits {
-        uint8_t all;
+        uint8_t all = 0;
         struct bits {
             uint8_t has_pin_mode       :1;
             uint8_t has_pin_write      :1;
@@ -331,17 +342,16 @@ private:
             uint8_t has_spi_end_tr     :1;
             uint8_t has_transfer       :1;
         } single;
-        Bits() {bits{false, false, false, false, false, false, false, false};}
     } flags;
 
-
+    //variables for internal calculations
     float frequency     = 434.0;
     uint8_t sf          = LORA_SPREADING_FACTOR_7 >> 4;
     float bw            = 125.0;  //bandwidth in kHz
     uint16_t symbol_cnt = 100;
     uint8_t in_standby  = false;
 
-
+    //callbacks
     void (*pinMode)(uint8_t pin, uint8_t mode);
     void (*pinWrite)(uint8_t pin, uint8_t lvl);
     uint8_t (*pinRead)(uint8_t pin);
@@ -364,7 +374,6 @@ private:
 
 
 public:
-    //SX127X(uint8_t cs, uint8_t rst, uint8_t dio0);
     SX127X(uint8_t cs, uint8_t rst, uint8_t dio0);
     SX127X(uint8_t cs, uint8_t rst, uint8_t dio0, uint8_t dio1);
     ~SX127X();
@@ -487,6 +496,26 @@ public:
      */
     uint8_t setSpreadingFactor(uint8_t spreading_factor);
 
+    /** @brief Set the implicit header.
+     *  Is called automatically when spreading factor is 6.
+     * 
+     * @return 0 on success. ERR_INVALID_MODEM_MODE if not in LoRa mode.
+     */
+    uint8_t setImplicitHeader();
+
+    /** @brief Set explicit header.
+     * 
+     * @return 0 on success. ERR_INVALID_MODEM_MODE if not in LoRa mode.
+     */
+    uint8_t setExplicitHeader();
+
+    /** @brief Set the payload length when using explicit header
+     * . Required when spreading factor is 6!
+     * 
+     * @param length Payload length
+     */
+    void setPayloadLength(uint8_t length);
+
     /** @brief Set the coding rate
      * 
      * @param coding_rate desired coding rate
@@ -510,20 +539,21 @@ public:
      * @param SX127X_LNA_GAIN_G4
      * @param SX127X_LNA_GAIN_G5
      * @param SX127X_LNA_GAIN_G6
-     * @return uint8_t //TODO
+     * @return 0 on success. ERR_INVALID_MODEM_MODE if not in LoRa mode.
      */
     uint8_t setGain(uint8_t gain);
 
     /** @brief Enable or disable CRC 
      * 
      * @param enable 
+     * @return 0 on success. ERR_INVALID_MODEM_MODE if not in LoRa mode.
      */
     uint8_t setCRC(bool enable);
 
     /** @brief Enable low data rate optimalization if symbol
      * length exceeds 16ms, disable otherwise.
      */
-    void setLowDataRateOptimalization();
+    void setLowDataRateOptimalization(bool force = false);
 
     //TODO proper description
     /** @brief Set the frequency hopping period
@@ -619,12 +649,18 @@ public:
      */
     void receiveContinuous(uint8_t length = 0);
 
-    /** @brief 
+    /** @brief Check that received payload has valid CRC and header
      * 
      * @return 0 on success. ERR_CRC_MISMATCH when CRC check fails,
      * ERR_INVALID_HEADER when header check fails.
      */
     uint8_t checkPayloadIntegrity();
+
+    /** @brief Get length of the last received payload
+     * 
+     * @return Length of the last received payload
+     */
+    uint8_t getPayloadLength();
 
     /** @brief Read received data from FIFO
      * 

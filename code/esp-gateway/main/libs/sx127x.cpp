@@ -2,19 +2,14 @@
  * @file SX127X.cpp
  * @author Lukáš Baštýř (l.bastyr@seznam.cz)
  * @brief SX127X library
- * @version 0.1
- * @date 24-06-2023
+ * @version 0.2
+ * @date 30-08-2023
  * 
  * @copyright Copyright (c) 2023
  * 
  */
 
 #include "sx127x.hpp"
-#include <esp_log.h>
-
-
-static const char* TAG = "sx127x";
-
 
 
 //private
@@ -90,6 +85,7 @@ void SX127X::registerSpiTransfer(void (*func)(uint8_t, uint8_t *, size_t)) {
 uint8_t SX127X::begin(float frequency, uint8_t sync_word, uint16_t preamble_len) {
     //check that all required callbacks were set
     if (!this->flags.single.has_pin_write ||
+        !this->flags.single.has_pin_read  ||
         !this->flags.single.has_transfer  ||
         !this->flags.single.has_micros    ||
         !this->flags.single.has_delay)
@@ -109,13 +105,13 @@ uint8_t SX127X::begin(float frequency, uint8_t sync_word, uint16_t preamble_len)
     this->pinWrite(this->rst, this->high);
 
 
-    //check chip type/version
+    //check chip version
     this->chip_version = getVersion();
     switch (this->chip_version) {
         case SX1272_CHIP_VERSION:
         case SX1276_CHIP_VERSION:
-        case RFM95_CHIP_VERSION:
-        case RFM69_CHIP_VERSION: break;
+        case RFM95_CHIP_VERSION: break;
+        //case RFM69_CHIP_VERSION: break;
         default: return ERR_INVALID_CHIP_VERSION;
     }
 
@@ -196,7 +192,6 @@ void SX127X::setModemMode(uint8_t modem) {
 }
 
 uint8_t SX127X::getModemMode() {
-    //TODO test masking
     return readRegister(REG_OP_MODE, 7, 7);
 }
 
@@ -205,17 +200,22 @@ void SX127X::setSyncWord(uint8_t sync_word) {
     writeRegister(REG_SYNC_WORD, sync_word);
 }
 
-//TODO FSK has different register
 uint8_t SX127X::setPreambleLength(uint16_t preamble_len) {
     if (preamble_len < 6)
-        return ERR_INVALID_PREAMBLE_LEN;   //TODO return values
+        return ERR_INVALID_PREAMBLE_LEN;
     writeRegister(REG_PREAMBLE_MSB, (uint8_t)((preamble_len >> 8) & 0xFF));
     writeRegister(REG_PREAMBLE_LSB, (uint8_t)(preamble_len & 0xFF));
     return 0;
 }
 
 uint8_t SX127X::setFrequency(float frequency) {
-    //TODO check frequency range based on selected module
+    if (this->chip_version == SX1272_CHIP_VERSION && (frequency < 860 || frequency > 1020))
+        return ERR_INNVALID_FREQUENCY;
+    if (this->chip_version == SX1276_CHIP_VERSION && (frequency < 137 || frequency > 1020))
+        return ERR_INNVALID_FREQUENCY;
+    //if (this->chip_version == RFM69_CHIP_VERSION)
+    if (this->chip_version == RFM95_CHIP_VERSION && (frequency < 433 || frequency > 915))
+        return ERR_INNVALID_FREQUENCY;
 
     //go to standby first
     setMode(SX127X_OP_MODE_STANDBY);
@@ -230,7 +230,6 @@ uint8_t SX127X::setFrequency(float frequency) {
 }
 
 uint8_t SX127X::setBandwidth(uint8_t bandwidth) {
-    //TODO check modem type
     if (getModemMode() != SX127X_MODEM_MODE_LORA)
         return ERR_INVALID_MODEM_MODE;
 
@@ -245,7 +244,7 @@ uint8_t SX127X::setBandwidth(uint8_t bandwidth) {
         case LORA_BANDWIDTH_125kHz:   this->bw = 125.0;  break;
         case LORA_BANDWIDTH_250kHz:   this->bw = 250.0;  break;
         case LORA_BANDWIDTH_500kHz:   this->bw = 500.0;  break;
-        default: return ERR_INVALID_BANDWIDTH;  //TODO return types
+        default: return ERR_INVALID_BANDWIDTH;
     }
 
     setRegister(REG_MODEM_CONFIG_1, bandwidth, 4, 7);
@@ -260,26 +259,26 @@ uint8_t SX127X::setSpreadingFactor(uint8_t spreading_factor) {
         return ERR_INVALID_MODEM_MODE;
 
     switch (spreading_factor) {
-        case LORA_SPREADING_FACTOR_6  :
-        case LORA_SPREADING_FACTOR_7  :
-        case LORA_SPREADING_FACTOR_8  :
-        case LORA_SPREADING_FACTOR_9  :
-        case LORA_SPREADING_FACTOR_10 :
-        case LORA_SPREADING_FACTOR_11 :
-        case LORA_SPREADING_FACTOR_12 : break;
-        default: return ERR_INVALID_SPREADING_FACTOR;  //TODO return types
+        case LORA_SPREADING_FACTOR_6:
+        case LORA_SPREADING_FACTOR_7:
+        case LORA_SPREADING_FACTOR_8:
+        case LORA_SPREADING_FACTOR_9:
+        case LORA_SPREADING_FACTOR_10:
+        case LORA_SPREADING_FACTOR_11:
+        case LORA_SPREADING_FACTOR_12: break;
+        default: return ERR_INVALID_SPREADING_FACTOR;
     }
 
     setRegister(REG_MODEM_CONFIG_2, spreading_factor, 4, 7);
     //special configuration for spreading factor 6
     if (spreading_factor == LORA_SPREADING_FACTOR_6) {
-        setRegister(REG_MODEM_CONFIG_1, LORA_IMPLICIT_HEADER, 0, 0);
+        setImplicitHeader();
         setRegister(REG_DETECT_OPTIMIZE, LORA_DETECTION_OPTIMIZE_SF6, 0, 2);
         setRegister(REG_DETECTION_THRESHOLD, LORA_DETECTION_THRESHOLD_SF6);
     }
     //default everything when sf != 6
     else {
-        setRegister(REG_MODEM_CONFIG_1, LORA_EXPLICIT_HEADER, 0, 0);
+        setImplicitHeader();
         setRegister(REG_DETECT_OPTIMIZE, LORA_DETECTION_OPTIMIZE_SF7_12, 0, 2);
         setRegister(REG_DETECTION_THRESHOLD, LORA_DETECTION_THRESHOLD_SF7_12);
     }
@@ -289,6 +288,24 @@ uint8_t SX127X::setSpreadingFactor(uint8_t spreading_factor) {
     //check and enable/disable LDRO
     setLowDataRateOptimalization();
     return 0;
+}
+
+uint8_t SX127X::setImplicitHeader() {
+    if (getModemMode() != SX127X_MODEM_MODE_LORA)
+        return ERR_INVALID_MODEM_MODE;
+
+    setRegister(REG_MODEM_CONFIG_1, LORA_IMPLICIT_HEADER, 0, 0);
+}
+
+uint8_t SX127X::setExplicitHeader() {
+    if (getModemMode() != SX127X_MODEM_MODE_LORA)
+        return ERR_INVALID_MODEM_MODE;
+
+    setRegister(REG_MODEM_CONFIG_1, LORA_EXPLICIT_HEADER, 0, 0);
+}
+
+void SX127X::setPayloadLength(uint8_t length) {
+    writeRegister(REG_PAYLOAD_LENGTH, length);
 }
 
 uint8_t SX127X::setCodingRate(uint8_t coding_rate) {
@@ -315,7 +332,8 @@ uint8_t SX127X::setGain(uint8_t gain) {
 
     setMode(SX127X_OP_MODE_STANDBY);
 
-    //TODO FSK //get mode
+    if (getModemMode() != SX127X_MODEM_MODE_LORA)
+        return ERR_INVALID_MODEM_MODE;
 
     //set automatic gain control
     if (gain == 0)
@@ -329,7 +347,8 @@ uint8_t SX127X::setGain(uint8_t gain) {
 }
 
 uint8_t SX127X::setCRC(bool enable) {
-    //TODO FSK //check modem
+    if (getModemMode() != SX127X_MODEM_MODE_LORA)
+        return ERR_INVALID_MODEM_MODE;
     
     if(enable)
         setRegister(REG_MODEM_CONFIG_2, LORA_RX_PAYLOAD_CRC_ON, 2, 2);
@@ -339,9 +358,12 @@ uint8_t SX127X::setCRC(bool enable) {
     return 0;
 }
 
-void SX127X::setLowDataRateOptimalization() {
+void SX127X::setLowDataRateOptimalization(bool force) {
+    if (getModemMode() != SX127X_MODEM_MODE_LORA)
+        return;
+
     float ts = float(uint16_t(1) << this->sf) / this->bw;
-    if(ts >= 16.0)
+    if(ts >= 16.0 || force)
         setRegister(REG_MODEM_CONFIG_3, LORA_LOW_DATA_RATE_OPT_ON, 3, 3);
     else
         setRegister(REG_MODEM_CONFIG_3, LORA_LOW_DATA_RATE_OPT_OFF, 3, 3);
@@ -408,7 +430,7 @@ uint8_t SX127X::setPower(int8_t power, bool pa_boost) {
         //calculate correct register value for specified power.
         //Is shifted by -0.2dBm for -4dBm (-4.2dBm)
         if (power == -4)
-            pa_config = SX127X_PA_SELECT_RFO | 0b00000000 | (power + 4);    //TODO macro for this power value?
+            pa_config = SX127X_PA_SELECT_RFO | 0b00000000 | (power + 4);
         //get rid of the 0.2 offset
         else if (power < 0)
             pa_config = SX127X_PA_SELECT_RFO | 0b00100000 | (power + 3);
@@ -548,8 +570,7 @@ uint8_t SX127X::transmit(uint8_t *data, uint8_t length) {
     return reg;
 }
 
-//TODO hop
-//TODO continuous
+
 uint8_t SX127X::receiveBlocking(uint8_t *data, uint8_t length) {
     receiveStart(length);
 
@@ -659,11 +680,17 @@ uint8_t SX127X::checkPayloadIntegrity() {
     return 0;
 }
 
+uint8_t SX127X::getPayloadLength() {
+    //when using SF6, payload length is known in advance
+    if (this->sf == 6)
+        return readRegister(REG_PAYLOAD_LENGTH);
+    
+    return readRegister(REG_RX_NB_BYTES);
+}
+
 void SX127X::readData(uint8_t *data, uint8_t length) {
-    uint8_t payload_length = length;
-    if (this->sf != 6)
-        payload_length = readRegister(REG_RX_NB_BYTES);
-            
+    uint8_t payload_length = getPayloadLength();
+
     if (length > payload_length || length == 0)
         length = payload_length;
 
