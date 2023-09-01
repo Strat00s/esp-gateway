@@ -71,32 +71,37 @@ spi_device_handle_t dev_handl;
 
 
 void pinMode(uint8_t pin, uint8_t mode) {
-    //TODO pullup/down on input
-    //ESP_LOGI(TAG, "Set pin %d to mode %d", pin, mode);
+    ESP_LOGD(TAG, "Set pin %d to mode %d", pin, mode);
     gpio_set_direction((gpio_num_t)pin, (gpio_mode_t)mode);
 }
 void pinWrite(uint8_t pin, uint8_t lvl) {
+    ESP_LOGD(TAG, "Set pin %d to %d", pin, lvl);
     gpio_set_level((gpio_num_t)pin, lvl);
 }
 uint8_t pinRead(uint8_t pin) {
+    ESP_LOGD(TAG, "Read pin %d", pin);
     return gpio_get_level((gpio_num_t)pin);
 }
 void delay(uint32_t ms) {
+    ESP_LOGD(TAG, "Delay of %lu ms", ms);
     vTaskDelay(ms / portTICK_PERIOD_MS);
 }
 uint32_t micros() {
     return esp_timer_get_time();
 }
 void SPIBeginTransaction() {
+    ESP_LOGD(TAG, "Begin transaction");
     auto ret = spi_device_acquire_bus(dev_handl, portMAX_DELAY);
     ESP_ERROR_CHECK(ret);
 }
 void SPIEndTransaction() {
+    ESP_LOGD(TAG, "End transaction");
     spi_device_release_bus(dev_handl);
 }
 void SPITransfer(uint8_t addr, uint8_t *buffer, size_t length) {
-    //ESP_LOGI(TAG, "SPI read length: %d", length);
-    //ESP_LOGI(TAG, "Address 0x%02X", addr);
+    ESP_LOGD(TAG, "SPI Transaction");
+    ESP_LOGD(TAG, "SPI read length: %d", length);
+    ESP_LOGD(TAG, "Address 0x%02X", addr);
     spi_transaction_t t;
     memset(&t, 0, sizeof(t));
     t.length = 8;
@@ -104,6 +109,7 @@ void SPITransfer(uint8_t addr, uint8_t *buffer, size_t length) {
     
     auto ret = spi_device_polling_transmit(dev_handl, &t);
     ESP_ERROR_CHECK(ret);
+    ESP_LOGD(TAG, "SPI RET: %d", ret);
 
     memset(&t, 0, sizeof(t));
     t.length = length * 8;
@@ -117,6 +123,7 @@ void SPITransfer(uint8_t addr, uint8_t *buffer, size_t length) {
 
     ret = spi_device_polling_transmit(dev_handl, &t);
     ESP_ERROR_CHECK(ret);
+    ESP_LOGD(TAG, "SPI RET: %d", ret);
 }
 
 
@@ -131,10 +138,21 @@ static void IRAM_ATTR gpio_isr_handler(void* arg) {
     }
 }
 
+void blink(uint8_t cnt) {
+    for (int i = 0; i < cnt; i++) {
+        pinWrite(STATUS_LED, 1);
+        delay(100);
+        pinWrite(STATUS_LED, 0);
+        delay(100);
+    }
+    delay(1000);
+}
+
 
 extern "C" void app_main() {
-    ESP_LOGI(TAG, "App start");
-    ESP_LOGI(TAG, "Reset all pins");
+    delay(2000);
+    ESP_LOGD(TAG, "App start");
+    ESP_LOGD(TAG, "Reset all pins");
 
     //configure default pin states
     gpio_reset_pin(CS1);
@@ -151,7 +169,6 @@ extern "C" void app_main() {
 
     pinMode(STATUS_LED, GPIO_MODE_INPUT_OUTPUT);
     pinWrite(STATUS_LED, 0);
-
 
     //configure SPI
     spi_bus_config_t buscfg = {
@@ -180,7 +197,7 @@ extern "C" void app_main() {
     //register callbacks
     lora.registerMicros(micros);
     lora.registerDelay(delay);
-    lora.registerPinMode(pinMode, GPIO_MODE_INPUT_OUTPUT, GPIO_MODE_OUTPUT);
+    lora.registerPinMode(pinMode, GPIO_MODE_INPUT_OUTPUT, GPIO_MODE_INPUT_OUTPUT);
     lora.registerPinWrite(pinWrite);
     lora.registerPinRead(pinRead);
     lora.registerSPIStartTransaction(SPIBeginTransaction);
@@ -190,28 +207,38 @@ extern "C" void app_main() {
     //start lora and reconfigure it
     uint8_t rc = lora.begin(434.0, 0x12, 8);
     if (rc) {
-        printf("BEGIN ERROR: %d\n", rc);
-        return;
+        while(true) {
+            blink(rc);
+            printf("BEGIN ERROR: %d\n", rc);
+        }
     }
     rc = lora.setBandwidth(LORA_BANDWIDTH_125kHz);
     if (rc) {
-        printf("BW ERROR: %d\n", rc);
-        return;
+        while(true) {
+            blink(rc);
+            printf("BW ERROR: %d\n", rc);
+        }
     }
     rc = lora.setSpreadingFactor(LORA_SPREADING_FACTOR_9);
     if (rc) {
-        printf("SF ERROR: %d\n", rc);
-        return;
+        while(true) {
+            blink(rc);
+            printf("SF ERROR: %d\n", rc);
+        }
     }
     rc = lora.setCodingRate(LORA_CODING_RATE_4_7);
     if (rc) {
-        printf("BCR ERROR: %d\n", rc);
-        return;
+        while(true) {
+            blink(rc);
+            printf("CR ERROR: %d\n", rc);
+        }
     }
     rc = lora.setRxTimeout(1023);
     if (rc) {
-        printf("RXT ERROR: %d\n", rc);
-        return;
+        while(true) {
+            blink(rc);
+            printf("RXT ERROR: %d\n", rc);
+        }
     }
 
     rc = lora.getVersion();
@@ -223,12 +250,6 @@ extern "C" void app_main() {
     gpio_install_isr_service(0);
     gpio_isr_handler_add(DIO01, gpio_isr_handler, (void*) DIO01);
 
-    printf("Starting in 3s...\n");
-    delay(1000);
-    printf("2s...\n");
-    delay(1000);
-    printf("1s...\n");
-    delay(1000);
 
     lora.receiveContinuous();
 

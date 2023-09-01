@@ -104,6 +104,8 @@ uint8_t SX127X::begin(float frequency, uint8_t sync_word, uint16_t preamble_len)
     this->pinWrite(this->cs, this->high);
     this->pinWrite(this->rst, this->high);
 
+    //reset the chip on start
+    reset();
 
     //check chip version
     this->chip_version = getVersion();
@@ -165,7 +167,7 @@ void SX127X::reset() {
     this->pinWrite(this->rst, this->low);
     this->delay(1);
     this->pinWrite(this->rst, this->high);
-    this->delay(5);
+    this->delay(10);    //5ms just don't seem to be reliable with ESP
 }
 
 uint8_t SX127X::getVersion() {
@@ -273,12 +275,14 @@ uint8_t SX127X::setSpreadingFactor(uint8_t spreading_factor) {
     //special configuration for spreading factor 6
     if (spreading_factor == LORA_SPREADING_FACTOR_6) {
         setImplicitHeader();
+        //setRegister(REG_MODEM_CONFIG_1, LORA_IMPLICIT_HEADER, 0, 0);
         setRegister(REG_DETECT_OPTIMIZE, LORA_DETECTION_OPTIMIZE_SF6, 0, 2);
         setRegister(REG_DETECTION_THRESHOLD, LORA_DETECTION_THRESHOLD_SF6);
     }
     //default everything when sf != 6
     else {
-        setImplicitHeader();
+        setExplicitHeader();
+        //setRegister(REG_MODEM_CONFIG_1, LORA_EXPLICIT_HEADER, 0, 0);
         setRegister(REG_DETECT_OPTIMIZE, LORA_DETECTION_OPTIMIZE_SF7_12, 0, 2);
         setRegister(REG_DETECTION_THRESHOLD, LORA_DETECTION_THRESHOLD_SF7_12);
     }
@@ -295,6 +299,8 @@ uint8_t SX127X::setImplicitHeader() {
         return ERR_INVALID_MODEM_MODE;
 
     setRegister(REG_MODEM_CONFIG_1, LORA_IMPLICIT_HEADER, 0, 0);
+
+    return 0;
 }
 
 uint8_t SX127X::setExplicitHeader() {
@@ -302,6 +308,8 @@ uint8_t SX127X::setExplicitHeader() {
         return ERR_INVALID_MODEM_MODE;
 
     setRegister(REG_MODEM_CONFIG_1, LORA_EXPLICIT_HEADER, 0, 0);
+
+    return 0;
 }
 
 void SX127X::setPayloadLength(uint8_t length) {
@@ -721,7 +729,7 @@ void SX127X::SPIMakeTransaction(uint8_t addr, uint8_t *data, size_t length) {
 
 uint8_t SX127X::readRegister(uint8_t addr, uint8_t mask_lsb, uint8_t mask_msb) {
     addr &= SX127X_READ_MASK;
-    uint8_t reg;
+    uint8_t reg = 0;
     SPIMakeTransaction(addr, &reg);
 
     uint8_t keep_mask = ~(0xFF >> (8 - mask_lsb) | 0xFF << (mask_msb + 1));
