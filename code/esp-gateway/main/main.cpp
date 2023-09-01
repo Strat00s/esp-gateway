@@ -1,19 +1,23 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <string>
 #include <esp_log.h>
-#include "soc/gpio_struct.h"
+
 #include "driver/gpio.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/portmacro.h>
 #include <driver/spi_master.h>
-//#include "libs/sx127x.hpp"
+#include <esp_timer.h>
+#include <esp_intr_alloc.h>
 
-/*
+#include "libs/sx127x.hpp"
+
+
 //I2C
-#define SDA 6
-#define SCL 7
+#define SDA GPIO_NUM_6
+#define SCL GPIO_NUM_7
 
 //SPI for modlues
 #define SCK  GPIO_NUM_36
@@ -35,121 +39,138 @@
 #define DIO04 GPIO_NUM_3
 
 //NRF240L1+ module
-#define NRF_IRQ 17
-#define NRF_CE  18
-#define NRF_CS  21
+#define NRF_IRQ GPIO_NUM_17
+#define NRF_CE  GPIO_NUM_18
+#define NRF_CS  GPIO_NUM_21
 
 //ESP-01
-#define TX1    14
-#define RX1    16
-#define IRG_01 15
+#define TX1    GPIO_NUM_14
+#define RX1    GPIO_NUM_16
+#define IRG_01 GPIO_NUM_15
 
 #define STATUS_LED GPIO_NUM_1
 
 //434MHz rf modules
-#define RF_IN  9
-#define RF_OUT 8
+#define RF_IN  GPIO_NUM_9
+#define RF_OUT GPIO_NUM_8
 
 //SD card
-#define SD_SCK  12
-#define SD_MISO 13
-#define SD_MOSI 11
-#define SD_CS   10
-*/
-
-
-#define CS1  GPIO_NUM_26
-#define RST1 GPIO_NUM_33
-#define CS4  GPIO_NUM_39
-#define RST4 GPIO_NUM_40
-
-#define SCK  GPIO_NUM_36
-#define MISO GPIO_NUM_37
-#define MOSI GPIO_NUM_38
+#define SD_SCK  GPIO_NUM_12
+#define SD_MISO GPIO_NUM_13
+#define SD_MOSI GPIO_NUM_11
+#define SD_CS   GPIO_NUM_10
 
 
 static const char* TAG = "main";
 
+volatile bool rx_done = false;
 
-//SX127X lora(26, 33, 5);
 
+SX127X lora(CS1, RST1, DIO01);
 spi_device_handle_t dev_handl;
 
 
-//void pinMode(uint8_t pin, uint8_t mode) {
-//    //TODO pullup/down on input
-//    ESP_LOGI(TAG, "Set pin %d to mode %d", pin, mode);
-//    gpio_set_direction((gpio_num_t)pin, (gpio_mode_t)mode);
-//}
-//
-//void pinWrite(uint8_t pin, uint8_t lvl) {
-//    ESP_LOGI(TAG, "Set pin %d lvl to %d", pin, lvl);
-//    gpio_set_level((gpio_num_t)pin, lvl);
-//}
-//
-//uint8_t pinRead(uint8_t pin) {
-//    ESP_LOGI(TAG, "Reading pin %d", pin);
-//    return gpio_get_level((gpio_num_t)pin);
-//}
-//
-//void delay(uint32_t ms) {
-//    ESP_LOGI(TAG, "Delay of %lums", ms);
-//    vTaskDelay(ms / portTICK_PERIOD_MS);
-//}
-
+void pinMode(uint8_t pin, uint8_t mode) {
+    ESP_LOGD(TAG, "Set pin %d to mode %d", pin, mode);
+    gpio_set_direction((gpio_num_t)pin, (gpio_mode_t)mode);
+}
+void pinWrite(uint8_t pin, uint8_t lvl) {
+    ESP_LOGD(TAG, "Set pin %d to %d", pin, lvl);
+    gpio_set_level((gpio_num_t)pin, lvl);
+}
+uint8_t pinRead(uint8_t pin) {
+    ESP_LOGD(TAG, "Read pin %d", pin);
+    return gpio_get_level((gpio_num_t)pin);
+}
+void delay(uint32_t ms) {
+    ESP_LOGD(TAG, "Delay of %lu ms", ms);
+    vTaskDelay(ms / portTICK_PERIOD_MS);
+}
+uint32_t micros() {
+    return esp_timer_get_time();
+}
 void SPIBeginTransaction() {
+    ESP_LOGD(TAG, "Begin transaction");
     auto ret = spi_device_acquire_bus(dev_handl, portMAX_DELAY);
     ESP_ERROR_CHECK(ret);
 }
-
 void SPIEndTransaction() {
+    ESP_LOGD(TAG, "End transaction");
     spi_device_release_bus(dev_handl);
 }
-
-void SPITransfer(uint8_t *tx_buffer, uint8_t *rx_buffer, size_t tx_length, size_t rx_length) {
+void SPITransfer(uint8_t addr, uint8_t *buffer, size_t length) {
+    ESP_LOGD(TAG, "SPI Transaction");
+    ESP_LOGD(TAG, "SPI read length: %d", length);
+    ESP_LOGD(TAG, "Address 0x%02X", addr);
     spi_transaction_t t;
     memset(&t, 0, sizeof(t));
-    t.length = tx_length * 8;
-    t.tx_buffer = tx_buffer;
-    //t.flags = SPI_TRANS_CS_KEEP_ACTIVE;
+    t.length = 8;
+    t.tx_buffer = &addr;
     
     auto ret = spi_device_polling_transmit(dev_handl, &t);
     ESP_ERROR_CHECK(ret);
-    
-    //write only
-    if (rx_length == 0)
-        return;
-    
+    ESP_LOGD(TAG, "SPI RET: %d", ret);
+
     memset(&t, 0, sizeof(t));
-    t.length = rx_length * 8;
-    t.rx_buffer = rx_buffer;
-    
+    t.length = length * 8;
+
+    //write
+    if (addr & 0b10000000)
+        t.tx_buffer = buffer;
+    //read
+    else
+        t.rx_buffer = buffer;
+
     ret = spi_device_polling_transmit(dev_handl, &t);
     ESP_ERROR_CHECK(ret);
+    ESP_LOGD(TAG, "SPI RET: %d", ret);
+}
+
+
+static void IRAM_ATTR gpio_isr_handler(void* arg) {
+    uint32_t gpio_num = (uint32_t) arg;
+    switch (gpio_num) {
+        case DIO01: rx_done = true; break;
+        case DIO02: rx_done = true; break;
+        case DIO03: rx_done = true; break;
+        case DIO04: rx_done = true; break;
+        default: break;
+    }
+}
+
+void blink(uint8_t cnt) {
+    for (int i = 0; i < cnt; i++) {
+        pinWrite(STATUS_LED, 1);
+        delay(100);
+        pinWrite(STATUS_LED, 0);
+        delay(100);
+    }
+    delay(1000);
 }
 
 
 extern "C" void app_main() {
-    ESP_LOGI(TAG, "App start");
+    delay(2000);
+    ESP_LOGD(TAG, "App start");
+    ESP_LOGD(TAG, "Reset all pins");
 
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    //configure default pin states
+    gpio_reset_pin(CS1);
+    gpio_reset_pin(RST1);
+    gpio_reset_pin(CS4);
+    gpio_reset_pin(RST4);
+    gpio_reset_pin(STATUS_LED);
 
+    pinMode(CS4,  GPIO_MODE_OUTPUT);
+    pinMode(RST4, GPIO_MODE_OUTPUT);
 
-    gpio_set_direction(CS1,  GPIO_MODE_INPUT_OUTPUT);// pinMode(CS1,  GPIO_MODE_OUTPUT);
-    gpio_set_direction(RST1, GPIO_MODE_INPUT_OUTPUT);// pinMode(RST1, GPIO_MODE_OUTPUT);
-    gpio_set_direction(CS4,  GPIO_MODE_INPUT_OUTPUT);//pinMode(CS4,  GPIO_MODE_OUTPUT);
-    gpio_set_direction(RST4, GPIO_MODE_INPUT_OUTPUT);//pinMode(RST4, GPIO_MODE_OUTPUT);
-    
-    gpio_set_level(CS1, 1);// pinWrite(CS1, 1);
-    gpio_set_level(RST1, 1);// pinWrite(RST1, 1);
-    gpio_set_level(CS4, 1);// pinWrite(CS4, 1);
-    gpio_set_level(RST4, 1);// pinWrite(RST4, 1);
+    pinWrite(CS4, 1);
+    pinWrite(RST4, 1);
 
-    //gpio_set_direction(STATUS_LED, GPIO_MODE_OUTPUT);//pinMode(STATUS_LED, GPIO_MODE_INPUT_OUTPUT);
+    pinMode(STATUS_LED, GPIO_MODE_INPUT_OUTPUT);
+    pinWrite(STATUS_LED, 0);
 
-    vTaskDelay(10 / portTICK_PERIOD_MS);
-
-
+    //configure SPI
     spi_bus_config_t buscfg = {
         .mosi_io_num = MOSI,
         .miso_io_num = MISO,
@@ -163,59 +184,103 @@ extern "C" void app_main() {
 
     spi_device_interface_config_t devcfg = {
         .mode = 0,
-        .clock_speed_hz = 4000000,
+        .clock_speed_hz = 10000000,
         .spics_io_num = -1,
         .flags = 0,
         .queue_size = 1,
         .pre_cb = NULL
     };
-
     ret = spi_bus_add_device(HSPI_HOST, &devcfg, &dev_handl);
     ESP_ERROR_CHECK(ret);
-    //lora.registerDelay(delay);
-    //lora.registerPinMode(pinMode, GPIO_MODE_INPUT_OUTPUT, GPIO_MODE_OUTPUT);
-    //lora.registerPinWrite(pinWrite);
-    //lora.registerPinRead(pinRead);
-    //lora.registerSPIStartTransaction();
-    //lora.registerSPIEndTransaction();
-    //lora.registerSpiTransfer();
 
-    bool toggle = 0;
+
+    //register callbacks
+    lora.registerMicros(micros);
+    lora.registerDelay(delay);
+    lora.registerPinMode(pinMode, GPIO_MODE_INPUT_OUTPUT, GPIO_MODE_INPUT_OUTPUT);
+    lora.registerPinWrite(pinWrite);
+    lora.registerPinRead(pinRead);
+    lora.registerSPIStartTransaction(SPIBeginTransaction);
+    lora.registerSPIEndTransaction(SPIEndTransaction);
+    lora.registerSpiTransfer(SPITransfer);
+
+    //start lora and reconfigure it
+    uint8_t rc = lora.begin(434.0, 0x12, 8);
+    if (rc) {
+        while(true) {
+            blink(rc);
+            printf("BEGIN ERROR: %d\n", rc);
+        }
+    }
+    rc = lora.setBandwidth(LORA_BANDWIDTH_125kHz);
+    if (rc) {
+        while(true) {
+            blink(rc);
+            printf("BW ERROR: %d\n", rc);
+        }
+    }
+    rc = lora.setSpreadingFactor(LORA_SPREADING_FACTOR_9);
+    if (rc) {
+        while(true) {
+            blink(rc);
+            printf("SF ERROR: %d\n", rc);
+        }
+    }
+    rc = lora.setCodingRate(LORA_CODING_RATE_4_7);
+    if (rc) {
+        while(true) {
+            blink(rc);
+            printf("CR ERROR: %d\n", rc);
+        }
+    }
+    rc = lora.setRxTimeout(1023);
+    if (rc) {
+        while(true) {
+            blink(rc);
+            printf("RXT ERROR: %d\n", rc);
+        }
+    }
+
+    rc = lora.getVersion();
+    printf("Chip version: 0x%02X\n", rc);
+
+    //enable interupt
+    gpio_set_intr_type(DIO01, GPIO_INTR_POSEDGE);
+    gpio_intr_enable(DIO01);
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add(DIO01, gpio_isr_handler, (void*) DIO01);
+
+
+    lora.receiveContinuous();
+
+    uint32_t start = micros();
+    uint32_t bytes_total = 0;
 
     while(true) {
-        //ESP_LOGI(TAG, "Testing 2s delay");
-        //gpio_set_level(STATUS_LED, 1);//pinWrite(STATUS_LED, 1);
+        if (rx_done) {
+            rx_done = false;
+            uint8_t status = lora.checkPayloadIntegrity();
+            if (status) {
+                switch (status) {
+                    case ERR_RX_TIMEOUT:   printf("ERR_RX_TIMEOUT\n"); break;
+                    case ERR_CRC_MISMATCH: printf("ERR_CRC_MISSMATCH\n"); break;
+                    default: printf("UNKNOWN\n"); break;
+                }
+                lora.clearIrqFlags();
+                continue;
+            }
+            uint8_t payload[256] = {0};
+            lora.readData(payload);
+            bytes_total += lora.getPayloadLength();
+            lora.clearIrqFlags();
+            printf("Received payload: %s\n", payload);
+            printf("Total bytes received: %lu\n", bytes_total);
+        }
 
-        //ESP_LOGI(TAG, "Module 1 reset");
-        //ret = gpio_set_level(RST1, 0); //pinWrite(RST1, 0);
-        //ESP_ERROR_CHECK(ret);
-        //vTaskDelay(10 / portTICK_PERIOD_MS);
-        //ret = gpio_set_level(RST1, 0); //pinWrite(RST1, 1);
-        //ESP_ERROR_CHECK(ret);
-        //vTaskDelay(100 / portTICK_PERIOD_MS);
-
-
-        toggle = !toggle;
-        uint8_t out;
-        if (toggle)
-            out = 0x6 & 0b01111111;
-        else
-            out = 0x42 & 0b01111111;
-        uint8_t in[3];
-    
-        SPIBeginTransaction();
-        gpio_set_level(CS1, 0);// pinWrite(CS1, 0);
-        //vTaskDelay(1 / portTICK_PERIOD_MS);
-        SPITransfer(&out, in, 1, 3);
-        //vTaskDelay(1 / portTICK_PERIOD_MS);
-        gpio_set_level(CS1, 1); //pinWrite(CS1, 1);
-        SPIEndTransaction();
-
-        ESP_LOGI(TAG, "Sent data: 0x%02X", out);
-        ESP_LOGI(TAG, "Received data: 0x%02X 0x%02X 0x%02X", in[0], in[1], in[2]);
-
-        vTaskDelay(5000 / portTICK_PERIOD_MS);
-        //gpio_set_level(STATUS_LED, 0);//pinWrite(STATUS_LED, 0);
-        //vTaskDelay(1000 / portTICK_PERIOD_MS);
+        if (micros() - start > 1000*1000) {
+            start = micros();
+            pinWrite(STATUS_LED, !pinRead(STATUS_LED));
+            printf("STATUS LED: %d\n", pinRead(STATUS_LED));
+        }
     }
 }
