@@ -10,6 +10,7 @@
 #include <freertos/portmacro.h>
 #include <driver/spi_master.h>
 #include <esp_timer.h>
+#include <esp_intr_alloc.h>
 
 #include "libs/sx127x.hpp"
 
@@ -62,9 +63,10 @@
 
 static const char* TAG = "main";
 
+volatile bool rx_done = false;
+
 
 SX127X lora(CS1, RST1, DIO01);
-
 spi_device_handle_t dev_handl;
 
 
@@ -73,32 +75,25 @@ void pinMode(uint8_t pin, uint8_t mode) {
     //ESP_LOGI(TAG, "Set pin %d to mode %d", pin, mode);
     gpio_set_direction((gpio_num_t)pin, (gpio_mode_t)mode);
 }
-
 void pinWrite(uint8_t pin, uint8_t lvl) {
     gpio_set_level((gpio_num_t)pin, lvl);
 }
-
 uint8_t pinRead(uint8_t pin) {
     return gpio_get_level((gpio_num_t)pin);
 }
-
 void delay(uint32_t ms) {
     vTaskDelay(ms / portTICK_PERIOD_MS);
 }
-
 uint32_t micros() {
     return esp_timer_get_time();
 }
-
 void SPIBeginTransaction() {
     auto ret = spi_device_acquire_bus(dev_handl, portMAX_DELAY);
     ESP_ERROR_CHECK(ret);
 }
-
 void SPIEndTransaction() {
     spi_device_release_bus(dev_handl);
 }
-
 void SPITransfer(uint8_t addr, uint8_t *buffer, size_t length) {
     //ESP_LOGI(TAG, "SPI read length: %d", length);
     //ESP_LOGI(TAG, "Address 0x%02X", addr);
@@ -125,31 +120,40 @@ void SPITransfer(uint8_t addr, uint8_t *buffer, size_t length) {
 }
 
 
+static void IRAM_ATTR gpio_isr_handler(void* arg) {
+    uint32_t gpio_num = (uint32_t) arg;
+    switch (gpio_num) {
+        case DIO01: rx_done = true; break;
+        case DIO02: rx_done = true; break;
+        case DIO03: rx_done = true; break;
+        case DIO04: rx_done = true; break;
+        default: break;
+    }
+}
+
+
 extern "C" void app_main() {
     ESP_LOGI(TAG, "App start");
     ESP_LOGI(TAG, "Reset all pins");
-    
+
+    //configure default pin states
     gpio_reset_pin(CS1);
     gpio_reset_pin(RST1);
     gpio_reset_pin(CS4);
     gpio_reset_pin(RST4);
     gpio_reset_pin(STATUS_LED);
 
-    //pinMode(CS1,  GPIO_MODE_OUTPUT);
-    //pinMode(RST1, GPIO_MODE_OUTPUT);
     pinMode(CS4,  GPIO_MODE_OUTPUT);
     pinMode(RST4, GPIO_MODE_OUTPUT);
 
-    //pinWrite(CS1, 1);
-    //pinWrite(RST1, 1);
     pinWrite(CS4, 1);
     pinWrite(RST4, 1);
 
     pinMode(STATUS_LED, GPIO_MODE_INPUT_OUTPUT);
+    pinWrite(STATUS_LED, 0);
 
-    //vTaskDelay(10 / portTICK_PERIOD_MS);
 
-
+    //configure SPI
     spi_bus_config_t buscfg = {
         .mosi_io_num = MOSI,
         .miso_io_num = MISO,
@@ -172,6 +176,8 @@ extern "C" void app_main() {
     ret = spi_bus_add_device(HSPI_HOST, &devcfg, &dev_handl);
     ESP_ERROR_CHECK(ret);
 
+
+    //register callbacks
     lora.registerMicros(micros);
     lora.registerDelay(delay);
     lora.registerPinMode(pinMode, GPIO_MODE_INPUT_OUTPUT, GPIO_MODE_OUTPUT);
@@ -181,6 +187,7 @@ extern "C" void app_main() {
     lora.registerSPIEndTransaction(SPIEndTransaction);
     lora.registerSpiTransfer(SPITransfer);
 
+    //start lora and reconfigure it
     uint8_t rc = lora.begin(434.0, 0x12, 8);
     if (rc) {
         printf("BEGIN ERROR: %d\n", rc);
@@ -201,16 +208,20 @@ extern "C" void app_main() {
         printf("BCR ERROR: %d\n", rc);
         return;
     }
-
-    rc = lora.getVersion();
-
     rc = lora.setRxTimeout(1023);
     if (rc) {
         printf("RXT ERROR: %d\n", rc);
         return;
     }
 
+    rc = lora.getVersion();
     printf("Chip version: 0x%02X\n", rc);
+
+    //enable interupt
+    gpio_set_intr_type(DIO01, GPIO_INTR_POSEDGE);
+    gpio_intr_enable(DIO01);
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add(DIO01, gpio_isr_handler, (void*) DIO01);
 
     printf("Starting in 3s...\n");
     delay(1000);
@@ -219,22 +230,32 @@ extern "C" void app_main() {
     printf("1s...\n");
     delay(1000);
 
+    lora.receiveContinuous();
+
+    uint32_t start = micros();
+
     while(true) {
-        uint8_t payload[256] = {0};
-        rc = lora.receive(payload);
-        if (rc) {
-            printf("ERROR: ");
-            switch (rc) {
-                case ERR_RX_TIMEOUT:   printf("ERR_RX_TIMEOUT\n"); break;
-                case ERR_CRC_MISMATCH: printf("ERR_CRC_MISSMATCH\n"); break;
-                default: printf("UNKNOWN\n"); break;
+        if (rx_done) {
+            rx_done = false;
+            uint8_t status = lora.checkPayloadIntegrity();
+            if (status) {
+                switch (status) {
+                    case ERR_RX_TIMEOUT:   printf("ERR_RX_TIMEOUT\n"); break;
+                    case ERR_CRC_MISMATCH: printf("ERR_CRC_MISSMATCH\n"); break;
+                    default: printf("UNKNOWN\n"); break;
+                }
+                continue;
             }
-            continue;
+            uint8_t payload[256] = {0};
+            lora.readData(payload);
+            lora.clearIrqFlags();
+            printf("Received payload: %s\n", payload);
         }
-        printf("Received payload: %s\n", payload);
-        
-        //uint8_t msg[13] = "Hello World!";
-        //lora.transmit(msg, 13);
-        //delay(2000);
+
+        if (micros() - start > 500*1000) {
+            start = micros();
+            printf("STATUS LED: %d\n", pinRead(STATUS_LED));
+            pinWrite(STATUS_LED, !pinRead(STATUS_LED));
+        }
     }
 }

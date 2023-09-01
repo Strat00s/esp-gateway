@@ -615,15 +615,8 @@ uint8_t SX127X::receiveEnd() {
     //go back to standby
     setMode(SX127X_OP_MODE_STANDBY);
 
-    uint8_t status = 0;
-    uint8_t irq_flags = getIrqFlags();
-
-    //check valid header and CRC
-    if (!(irq_flags & IRQ_FLAG_VALID_HEADER))
-        status = ERR_INVALID_HEADER;
-    else if (getIrqFlags() & IRQ_FLAG_PAYLOAD_CRC_ERROR)
-        status = ERR_CRC_MISMATCH;
-
+    uint8_t status = checkPayloadIntegrity();
+    
     //clear IRQ flags
     writeRegister(REG_IRQ_FLAGS, 0xFF);
 
@@ -631,9 +624,40 @@ uint8_t SX127X::receiveEnd() {
 }
 
 void SX127X::receiveContinuous(uint8_t length) {
-    //TODO
+    setMode(SX127X_OP_MODE_STANDBY);
+
+    //set IO mapping
+    setRegister(REG_DIO_MAPPING_1, DIO0_LORA_RX_DONE, 6, 7);
+
+    //when using SF6, payload length must be know in advance
+    if (this->sf == 6)
+        setRegister(REG_PAYLOAD_LENGTH, length);
+
+    //set FIFO pointers (all 256 bytes used for RX)
+    setRegister(REG_FIFO_RX_BASE_ADDR, 0);  //where to start storing new data
+    setRegister(REG_FIFO_ADDR_PTR, 0);      //from where to read on reception
+
+    //apply errata fixes
+    errataFix(true);
+
+    //clear interrupt flags
+    clearIrqFlags();
+
+    //start receiving
+    setMode(SX127X_OP_MODE_RXCONTINUOUS);
 }
 
+
+uint8_t SX127X::checkPayloadIntegrity() {
+    uint8_t irq_flags = getIrqFlags();
+
+    //check valid header and CRC
+    if (!(irq_flags & IRQ_FLAG_VALID_HEADER))
+        return ERR_INVALID_HEADER;
+    if (getIrqFlags() & IRQ_FLAG_PAYLOAD_CRC_ERROR)
+        return ERR_CRC_MISMATCH;
+    return 0;
+}
 
 void SX127X::readData(uint8_t *data, uint8_t length) {
     uint8_t payload_length = length;

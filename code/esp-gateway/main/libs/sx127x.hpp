@@ -619,6 +619,12 @@ public:
      */
     void receiveContinuous(uint8_t length = 0);
 
+    /** @brief 
+     * 
+     * @return 0 on success. ERR_CRC_MISMATCH when CRC check fails,
+     * ERR_INVALID_HEADER when header check fails.
+     */
+    uint8_t checkPayloadIntegrity();
 
     /** @brief Read received data from FIFO
      * 
