@@ -191,6 +191,16 @@
 #define DIO_MAP_PREAMBLE_DETECT        0b00000001
 #define DIO_MAP_RSSI                   0b00000000
 
+//IRQ flags
+#define IRQ_FLAG_RX_TIMEOUT               0b10000000
+#define IRQ_FLAG_RX_DONE                  0b01000000
+#define IRQ_FLAG_PAYLOAD_CRC_ERROR        0b00100000
+#define IRQ_FLAG_VALID_HEADER             0b00010000
+#define IRQ_FLAG_TX_DONE                  0b00001000
+#define IRQ_FLAG_CAD_DONE                 0b00000100
+#define IRQ_FLAG_FHSS_CHANGE_CHANNEL      0b00000010
+#define IRQ_FLAG_CAD_DETECTED             0b00000001
+
 
 //TODO finish registers
 //SX127X registers
@@ -290,6 +300,7 @@
 #define ERR_INVALID_CHIP_VERSION        10 //wrong chip version was read. Check you connection.
 #define ERR_RX_TIMEOUT                  11
 #define ERR_CRC_MISMATCH                12
+#define ERR_INVALID_HEADER              13
 
 #define WARN_INVALID_TIMEOUT_SYMBOL_CNT 1
 
@@ -578,27 +589,30 @@ public:
      */
     uint8_t receiveBlocking(uint8_t* data, uint8_t length = 0);
 
-    /**
-     * @brief Non-blocking data receive, becasue user must implement
-     * their own interrupt routine for pins and timer  (or some other method).
-     * Use `receiveNonBlockingEnd()` for "cleanup" and payload check.
-     * Use `getData()` to read data from FIFO after successful receive.
+    /** @brief Configures module to be in single receive mode and starts reception.
+     *  Can be used for basic non-blocking receive implementation. User must implement
+     *  their own interrupt routine or some other method for pins. If DIO1 pin
+     *  is not used, user must implement their own timeout routine too.
+     *  Use `receiveEnd()` for "cleanup" and payload check after timeout or RX_DONE.
+     *  Use `readData()` to read data from FIFO after successful reception.
      * 
      * @param length Length of data to be received. Only used when using
      * lowest possible spreading factor LORA_SPREADING_FACTOR_6
      */
-    void receiveNonBlockingStart(uint8_t length = 0);
+    void receiveStart(uint8_t length = 0);
 
-    /**
-     * @brief Cleanup helper function for "non-blocking" receive
+    /** @brief Cleanup helper function for "non-blocking" receive
      * 
      * @return 0 on success. ERR_CRC_MISMATCH when CRC check fails.
      */
-    uint8_t receiveNonBlockingEnd();
+    uint8_t receiveEnd();
 
     /** @brief Continuous non-blocking receive. User must implement
-     * their own interrupt routine (or some other method) for checking
-     * DIO0 pin status.
+     *  their own interrupt routine (or some other method) for checking
+     *  DIO0 pin status (preferabely before calling this function).
+     *  After successful reception, user should check data integrity
+     *  by checking `PayloadCrcError` interrupt flag in register
+     *  `RegIrqFlags` (5th bit).
      * 
      * @param length 
      * @return 
@@ -613,7 +627,12 @@ public:
      * @param length Length of data to be received. Only used when using
      * lowest possible spreading factor LORA_SPREADING_FACTOR_6
      */
-    void getData(uint8_t *data, uint8_t length = 0);
+    void readData(uint8_t *data, uint8_t length = 0);
+
+
+    uint8_t getIrqFlags();
+
+    void clearIrqFlags();
 
 
     /** @brief Make entire SPI transaction 
