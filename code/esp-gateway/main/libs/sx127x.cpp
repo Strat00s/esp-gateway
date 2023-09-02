@@ -82,7 +82,7 @@ void SX127X::registerSpiTransfer(void (*func)(uint8_t, uint8_t *, size_t)) {
 }
 
 
-uint8_t SX127X::begin(float frequency, uint8_t sync_word, uint16_t preamble_len) {
+uint8_t SX127X::begin(float frequency, uint8_t sync_word, uint16_t preamble_len, uint8_t bandwidth, uint8_t spreading_factor, uint8_t coding_rate) {
     //check that all required callbacks were set
     if (!this->flags.single.has_pin_write ||
         !this->flags.single.has_pin_read  ||
@@ -139,13 +139,13 @@ uint8_t SX127X::begin(float frequency, uint8_t sync_word, uint16_t preamble_len)
     setFrequency(frequency);
 
     //125khz bandwidth
-    setBandwidth(LORA_BANDWIDTH_125kHz);
+    setBandwidth(bandwidth);
 
     //set spreading factor to 7
-    setSpreadingFactor(LORA_SPREADING_FACTOR_7);
+    setSpreadingFactor(spreading_factor);
 
     //set error coding rate to 4/5
-    setCodingRate(LORA_CODING_RATE_4_5);
+    setCodingRate(coding_rate);
 
     //set automatic gain
     setGain(SX127X_LNA_GAIN_AUTOMATIC);

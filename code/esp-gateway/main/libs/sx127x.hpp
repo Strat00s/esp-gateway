@@ -395,7 +395,7 @@ public:
      * @param preamble_len length of the preamble
      * @return uint8_t 
      */
-    uint8_t begin(float frequency, uint8_t sync_word, uint16_t preamble_len);
+    uint8_t begin(float frequency, uint8_t sync_word = 0x12, uint16_t preamble_len = 8, uint8_t bandwidth = LORA_BANDWIDTH_125kHz, uint8_t spreading_factor = LORA_SPREADING_FACTOR_7, uint8_t coding_rate = LORA_CODING_RATE_4_5);
 
 
     /** @brief Reset the module*/
