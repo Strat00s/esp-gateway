@@ -12,12 +12,6 @@
 #include <driver/spi_master.h>
 #include <esp_timer.h>
 #include <esp_intr_alloc.h>
-#include <sys/unistd.h>
-#include <sys/stat.h>
-#include "esp_vfs_fat.h"
-#include "sdmmc_cmd.h"
-#include <mqtt5_client.h>
-#include <mqtt_supported_features.h>
 
 #include "libs/sx127x.hpp"
 
