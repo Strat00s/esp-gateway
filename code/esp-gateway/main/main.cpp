@@ -12,6 +12,12 @@
 #include <driver/spi_master.h>
 #include <esp_timer.h>
 #include <esp_intr_alloc.h>
+#include <sys/unistd.h>
+#include <sys/stat.h>
+#include "esp_vfs_fat.h"
+#include "sdmmc_cmd.h"
+#include <mqtt5_client.h>
+#include <mqtt_supported_features.h>
 
 #include "libs/sx127x.hpp"
 
@@ -60,6 +66,7 @@ volatile bool irq1 = false;
 volatile bool irq2 = false;
 volatile bool irq3 = false;
 volatile bool irq4 = false;
+
 
 
 SX127X lora_434(CS1, RST1, DIO01);
@@ -138,12 +145,12 @@ static void IRAM_ATTR gpio_isr_handler(void* arg) {
 #define PTRN_ID_INIT 2
 
 //blink patterns
-//blink cnt, blink on time (1 = 100ms), delay between pattern repeats (1 = 100ms)
+//blink cnt, blink on time (1 = 10ms), delay between pattern repeats (1 = 100ms)
 //delay between individual blinks is 100ms
 static uint8_t blink_patterns[3][3] = {
-    {5, 1, 5},  //PTRN_ID_ERR
-    {1, 1, 50}, //PTRN_ID_IDLE
-    {3, 1, 1}, //PTRN_ID_INIT
+    {5, 10, 5},  //PTRN_ID_ERR
+    {1, 10, 50}, //PTRN_ID_IDLE
+    {3, 5, 1}, //PTRN_ID_INIT
 };
 
 void status_task(void *pvParameters) {
@@ -155,12 +162,34 @@ void status_task(void *pvParameters) {
     while (true) {
         for (int i = 0; i < blink_patterns[id][0]; i++) {
             gpio_set_level(STATUS_LED, 1);
-            vTaskDelay(pdMS_TO_TICKS(blink_patterns[id][1] * 100));
+            vTaskDelay(pdMS_TO_TICKS(blink_patterns[id][1] * 10));
             gpio_set_level(STATUS_LED, 0);
             vTaskDelay(pdMS_TO_TICKS(100));
         }
         xTaskNotifyWait(0, 0, &id, pdMS_TO_TICKS(blink_patterns[id][2]* 100));
     }
+}
+
+
+void configure_lora(SX127X *lora, float freq, uint8_t sync_word, uint16_t preamble_len, uint8_t bw, uint8_t sf, uint8_t cr) {
+    //register callbacks
+    lora->registerMicros(micros);
+    lora->registerDelay(delay);
+    lora->registerPinMode(pinMode, GPIO_MODE_INPUT_OUTPUT, GPIO_MODE_INPUT_OUTPUT);
+    lora->registerPinWrite(pinWrite);
+    lora->registerPinRead(pinRead);
+    lora->registerSPIStartTransaction(SPIBeginTransaction);
+    lora->registerSPIEndTransaction(SPIEndTransaction);
+    lora->registerSpiTransfer(SPITransfer);
+
+    uint8_t rc = lora->begin(freq, sync_word, preamble_len, bw, sf, cr);
+    if (rc) {
+        xTaskNotify(status_task_handle, PTRN_ID_ERR, eSetValueWithOverwrite);
+        printf("434 BEGIN ERROR: %d\n", rc);
+        while(true);
+    }
+    rc = lora->getVersion();
+    printf("434 Chip version: 0x%02X\n", rc);
 }
 
 
@@ -180,12 +209,19 @@ extern "C" void app_main() {
 
 
     //configure default pin states
+    gpio_reset_pin(SCK);
+    gpio_reset_pin(MISO);
+    gpio_reset_pin(MOSI);
     gpio_reset_pin(CS1);
     gpio_reset_pin(RST1);
     gpio_reset_pin(DIO01);
     gpio_reset_pin(CS4);
     gpio_reset_pin(RST4);
     gpio_reset_pin(DIO04);
+    gpio_reset_pin(SD_SCK);
+    gpio_reset_pin(SD_CS);
+    gpio_reset_pin(SD_MOSI);
+    gpio_reset_pin(SD_MISO);
 
 
     //configure SPI
@@ -197,7 +233,7 @@ extern "C" void app_main() {
         .quadhd_io_num = -1,
         .max_transfer_sz = 0
     };
-    esp_err_t ret = spi_bus_initialize(HSPI_HOST, &buscfg, 0);
+    auto ret = spi_bus_initialize(SPI3_HOST, &buscfg, 0);
     ESP_ERROR_CHECK(ret);
 
     spi_device_interface_config_t devcfg = {
@@ -208,50 +244,19 @@ extern "C" void app_main() {
         .queue_size = 1,
         .pre_cb = NULL
     };
-    ret = spi_bus_add_device(HSPI_HOST, &devcfg, &dev_handl);
+    ret = spi_bus_add_device(SPI3_HOST, &devcfg, &dev_handl);
     ESP_ERROR_CHECK(ret);
 
-
-    //register callbacks
-    lora_434.registerMicros(micros);
-    lora_434.registerDelay(delay);
-    lora_434.registerPinMode(pinMode, GPIO_MODE_INPUT_OUTPUT, GPIO_MODE_INPUT_OUTPUT);
-    lora_434.registerPinWrite(pinWrite);
-    lora_434.registerPinRead(pinRead);
-    lora_434.registerSPIStartTransaction(SPIBeginTransaction);
-    lora_434.registerSPIEndTransaction(SPIEndTransaction);
-    lora_434.registerSpiTransfer(SPITransfer);
-
-    lora_868.registerMicros(micros);
-    lora_868.registerDelay(delay);
-    lora_868.registerPinMode(pinMode, GPIO_MODE_INPUT_OUTPUT, GPIO_MODE_INPUT_OUTPUT);
-    lora_868.registerPinWrite(pinWrite);
-    lora_868.registerPinRead(pinRead);
-    lora_868.registerSPIStartTransaction(SPIBeginTransaction);
-    lora_868.registerSPIEndTransaction(SPIEndTransaction);
-    lora_868.registerSpiTransfer(SPITransfer);
+    configure_lora(&lora_434, 434.0, 0x12, 8, LORA_BANDWIDTH_125kHz, LORA_SPREADING_FACTOR_9, LORA_CODING_RATE_4_7);
+    configure_lora(&lora_868, 868.0, 0x12, 8, LORA_BANDWIDTH_125kHz, LORA_SPREADING_FACTOR_9, LORA_CODING_RATE_4_7);
 
 
-    //start lora434 and reconfigure it
-    uint8_t rc = lora_434.begin(434.0, 0x12, 8, LORA_BANDWIDTH_125kHz, LORA_SPREADING_FACTOR_9, LORA_CODING_RATE_4_7);
-    if (rc) {
-        xTaskNotify(status_task_handle, PTRN_ID_ERR, eSetValueWithOverwrite);
-        printf("434 BEGIN ERROR: %d\n", rc);
-        return;
-    }
-    rc = lora_434.getVersion();
-    printf("434 Chip version: 0x%02X\n", rc);
-
-
-    //start lora868 and reconfigure it
-    rc = lora_868.begin(868.0, 0x12, 8, LORA_BANDWIDTH_125kHz, LORA_SPREADING_FACTOR_9, LORA_CODING_RATE_4_7);
-    if (rc) {
-        xTaskNotify(status_task_handle, PTRN_ID_ERR, eSetValueWithOverwrite);
-        printf("868 BEGIN ERROR: %d\n", rc);
-        return;
-    }
-    rc = lora_868.getVersion();
-    printf("868 Chip version: 0x%02X\n", rc);
+    uint8_t freq[3] = {0};
+    lora_434.readRegistersBurst(REG_FRF_MSB, freq, 3);
+    ESP_LOGI(TAG, "434 freq: 0x%02X%02X%02X", freq[0], freq[1], freq[2]);
+    memset(freq, 0, 3);
+    lora_868.readRegistersBurst(REG_FRF_MSB, freq, 3);
+    ESP_LOGI(TAG, "868 freq: 0x%02X%02X%02X", freq[0], freq[1], freq[2]);
 
 
     //enable gpio interupts
