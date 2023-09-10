@@ -1,21 +1,59 @@
+//TODO Add LCD
+//TODO Fix SD
+//TODO Make subcribe and publish routines for mqtt
+//TODO 5. init loras              //lcd, sd, mqtt
+//TODO 6. init nrf24              //lcd, sd, mqtt
+//TODO 7. init esp01              //lcd, sd, mqtt
+//TODO 8. init rf434              //lcd, sd, mqtt
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <string>
-#include <esp_log.h>
+#include <vector>
 
+#include <esp_log.h>
 #include "driver/gpio.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/queue.h>
 #include <freertos/portmacro.h>
+#include <freertos/queue.h>
 #include <driver/spi_master.h>
 #include <esp_timer.h>
 #include <esp_intr_alloc.h>
+#include "freertos/event_groups.h"
+#include "esp_system.h"
+#include "esp_wifi.h"
+#include "esp_event.h"
+#include "esp_log.h"
+#include "nvs_flash.h"
+#include "lwip/err.h"
+#include "lwip/sys.h"
 
 #include "libs/sx127x.hpp"
+#include "libs/simpleQueue.hpp"
+#include "wifi_cfg.h"
 
 
+#include <stdio.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+#include "esp_system.h"
+#include "nvs_flash.h"
+#include "esp_event.h"
+#include "esp_netif.h"
+#include <esp_netif_types.h>
+#include "esp_log.h"
+#include "mqtt_client.h"
+#include "mqtt5_client.h"
+#include <esp_sntp.h>
+#include <esp_netif_sntp.h>
+
+
+//pin defines
 //I2C
 #define SDA GPIO_NUM_6
 #define SCL GPIO_NUM_7
@@ -55,6 +93,42 @@
 #define SD_MOSI GPIO_NUM_11
 #define SD_CS   GPIO_NUM_10
 
+//blink pattern ids
+#define PTRN_ID_ERR  0
+#define PTRN_ID_IDLE 1
+#define PTRN_ID_INIT 2
+
+//wifi config
+#define WIFI_SSID TEST_WIFI_SSID
+#define WIFI_PASS TEST_WIFI_PASS
+#define WIFI_MAXIMUM_RETRY  5
+#define WIFI_CONNECTED_BIT         BIT0
+#define WIFI_FAIL_BIT              BIT1
+static int s_retry_num = 0;
+//esp_netif_t *netif_interface;
+esp_netif_ip_info_t ip_info;
+std::string ip_addr;
+
+
+#define MQTT_ID          0
+#define MQTT_NAME        "ESP32"
+#define MQTT_ROOT        "/gateway"
+#define MQTT_NODES_PATH  MQTT_ROOT "/NODES"
+#define MQTT_NODE_PATH   MQTT_NODES_PATH "/0"
+#define MQTT_IP_PATH     MQTT_NODE_PATH  "/IP"
+#define MQTT_CONN_PATH   MQTT_NODE_PATH  "/Connected"
+#define MQTT_STATUS_PATH MQTT_NODE_PATH  "/Status"
+#define MQTT_CMD_PATH    MQTT_NODE_PATH  "/CMD"
+#define MQTT_ALIVE_PATH  MQTT_NODE_PATH  "/Alive"
+#define MQTT_LA_PATH     MQTT_NODE_PATH  "/Last_Action"
+
+#define MQTT_ROUTING_PATH MQTT_ROOT "/Routing"
+
+#define MQTT_SEVERITY_SUCC    0
+#define MQTT_SEVERITY_INFO    1
+#define MQTT_SEVERITY_WARNING 2
+#define MQTT_SEVERITY_ERROR   3
+
 
 volatile bool irq1 = false;
 volatile bool irq2 = false;
@@ -63,15 +137,66 @@ volatile bool irq4 = false;
 
 
 
+/*----(Instances)----*/
 SX127X lora_434(CS1, RST1, DIO01);
 SX127X lora_868(CS4, RST4, DIO04);
 
 spi_device_handle_t dev_handl;
 
-TaskHandle_t status_task_handle;
-//TaskHandle_t log_task_handl;
-//TaskHandle_t display_task_handl;
-//TaskHandle_t status_task;
+esp_mqtt_client_handle_t mqtt_client;
+
+
+/*----(Data structures)----*/
+//mqtt publish queue struct
+typedef struct {
+    std::string path;
+    std::string data;
+} mqtt_queue_data_t;
+
+//led blink patterns
+struct blink_paptern {
+    uint8_t cnt;
+    uint32_t on_time;
+    uint32_t off_time;
+    uint32_t wait;
+};
+
+static blink_paptern blink_patpern_list[] = {
+    {   //PTRN_ID_ERR
+        .cnt      = 5,
+        .on_time  = 300,
+        .off_time = 200,
+        .wait     = 800,
+    },
+    {   //PTRN_ID_IDLE
+        .cnt      = 1,
+        .on_time  = 100,
+        .off_time = 0,
+        .wait     = 5000,
+    },
+    {   //PTRN_ID_INIT
+        .cnt      = 1,
+        .on_time  = 100,
+        .off_time = 0,
+        .wait     = 100,
+    },
+};
+
+
+/*----(Task)----*/
+static TaskHandle_t led_task_handle;
+static TaskHandle_t lcd_task_handle;
+static TaskHandle_t sntp_task_handle;
+static TaskHandle_t mqtt_task_handle;
+
+/*----(Synchronization structures)----*/
+//wifi event group
+static EventGroupHandle_t wifi_event_group;
+
+
+//TODO LED task queue
+SimpleQueue<mqtt_queue_data_t> mqtt_data_queue;
+
 
 
 void pinMode(uint8_t pin, uint8_t mode) {
@@ -133,39 +258,455 @@ static void IRAM_ATTR gpio_isr_handler(void* arg) {
 }
 
 
+std::string getTimeStr() {
+    time_t now;
+    time(&now);
+    struct tm timeinfo = {0};
+    localtime_r(&now, &timeinfo);
+    char buf[28] = {0};
+    sprintf(buf, "%02d.%02d.%04d %02d:%02d:%02d", (uint8_t)timeinfo.tm_mday, (uint8_t)timeinfo.tm_mon, (uint16_t)(1900 + timeinfo.tm_year), (uint8_t)timeinfo.tm_hour, (uint8_t)timeinfo.tm_min, (uint8_t)timeinfo.tm_sec);
+    return std::string(buf);
+}
 
-#define PTRN_ID_ERR  0
-#define PTRN_ID_IDLE 1
-#define PTRN_ID_INIT 2
+/** @brief Add messages to be publish to a publish queue
+ * 
+ * @param path Path to which to publish the data
+ * @param data Data to be published
+ * @param timeout Timeout in ticks how long to wait if queue is full
+ */
+void mqttPublishQueue(std::string path, std::string data, uint32_t timeout = 10) {
+    mqtt_queue_data_t queue_data = {
+        .path = path,
+        .data = data,
+    };
 
-//blink patterns
-//blink cnt, blink on time (1 = 10ms), delay between pattern repeats (1 = 100ms)
-//delay between individual blinks is 100ms
-static uint8_t blink_patterns[3][3] = {
-    {5, 10, 5},  //PTRN_ID_ERR
-    {1, 10, 50}, //PTRN_ID_IDLE
-    {3, 5, 1}, //PTRN_ID_INIT
-};
+    mqtt_data_queue.write(queue_data, timeout);
+}
 
-void status_task(void *pvParameters) {
-    //configure pins
+/** @brief Simple logging to mqtt 
+ * 
+ * @param msg Message to write to status path
+ * @param severity severity prefix
+ * @param timeout Timeout in ticks how long to wait if queue is full
+ */
+void mqttLog(std::string msg, uint8_t severity = MQTT_SEVERITY_INFO, uint32_t timeout = portMAX_DELAY) {
+    std::string data = getTimeStr();
+
+    if (severity == MQTT_SEVERITY_SUCC) {
+        data += " [ OK ] " + msg;
+        mqttPublishQueue(MQTT_STATUS_PATH "/[ OK ]", data, timeout);
+    }
+    else if (severity == MQTT_SEVERITY_INFO) {
+        data += " [INFO] " + msg;
+        mqttPublishQueue(MQTT_STATUS_PATH "/[INFO]", data, timeout);
+    }
+    else if (severity == MQTT_SEVERITY_WARNING) {
+        data += " [WARN] " + msg;
+        mqttPublishQueue(MQTT_STATUS_PATH "/[WARN]", data, timeout);
+    }
+    else {
+        data += " [FAIL] " + msg;
+        mqttPublishQueue(MQTT_STATUS_PATH "/[FAIL]", data, timeout);
+    }
+
+    mqttPublishQueue(MQTT_STATUS_PATH, data, timeout);
+}
+
+
+static void log_error_if_nonzero(const char *message, int error_code) {
+    static const char *TAG = "log_error";
+    
+    if (error_code != 0) {
+        ESP_LOGE(TAG, "Last error %s: 0x%x", message, error_code);
+    }
+}
+//default esp_event loop handler
+static void eventLoopHandler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
+    static const char *TAG = "Event Handler";
+
+    //WiFi event
+    if (event_base == WIFI_EVENT) {
+        switch (event_id) {
+            case WIFI_EVENT_STA_START:
+                esp_wifi_connect();
+                break;
+
+            case WIFI_EVENT_STA_DISCONNECTED:
+                if (s_retry_num < WIFI_MAXIMUM_RETRY) {
+                    esp_wifi_connect();
+                    s_retry_num++;
+                    ESP_LOGI(TAG, "retry to connect to the AP");
+                }
+                else
+                    xEventGroupSetBits(wifi_event_group, WIFI_FAIL_BIT);
+                ESP_LOGI(TAG,"connect to the AP fail");
+                break;
+
+            default: ESP_LOGW(TAG, "Unhandled ID %ld for WIFI_EVENT", event_id); break;
+        }
+        return;
+    }
+
+    //IP event
+    if (event_base == IP_EVENT) {
+        switch (event_id) {
+            case IP_EVENT_STA_GOT_IP: {
+                ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
+                ip_info = event->ip_info;   //save ip info
+                char buf[17] = {0};
+                sprintf(buf, IPSTR, IP2STR(&ip_info.ip));
+                ip_addr = buf;
+                ESP_LOGI(TAG, "got ip: %s", ip_addr.c_str());
+                s_retry_num = 0;
+                xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
+                break;
+            }
+        
+            default: ESP_LOGW(TAG, "Unhandled ID %ld for IP_EVENT", event_id); break;
+        }
+        return;
+    }
+
+    //MQTT event
+    if (event_base == (esp_event_base_t)"MQTT_EVENTS") {
+        esp_mqtt_event_handle_t event = (esp_mqtt_event_t *)event_data;
+        esp_mqtt_client_handle_t client = event->client;
+
+        switch ((esp_mqtt_event_id_t)event_id) {
+        //subscribe to everything on connect
+            case MQTT_EVENT_CONNECTED: {
+                ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
+
+                //subscribe to and publish everything
+                mqttPublishQueue(MQTT_NODES_PATH, "1");
+                mqttPublishQueue(MQTT_NODE_PATH, MQTT_NAME);
+                mqttPublishQueue(MQTT_IP_PATH, ip_addr);
+                mqttPublishQueue(MQTT_CONN_PATH, "TODO");
+                mqttPublishQueue(MQTT_CMD_PATH, "TODO");
+                mqttPublishQueue(MQTT_ALIVE_PATH, "TODO");
+                mqttPublishQueue(MQTT_LA_PATH, "TODO");
+                break;
+            }
+
+            case MQTT_EVENT_DISCONNECTED: ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED");                           break;
+            case MQTT_EVENT_SUBSCRIBED:   ESP_LOGI(TAG, "MQTT_EVENT_SUBSCRIBED, msg_id=%d", event->msg_id);   break;
+            case MQTT_EVENT_UNSUBSCRIBED: ESP_LOGI(TAG, "MQTT_EVENT_UNSUBSCRIBED, msg_id=%d", event->msg_id); break;
+            case MQTT_EVENT_PUBLISHED:    ESP_LOGI(TAG, "MQTT_EVENT_PUBLISHED, msg_id=%d", event->msg_id);    break;
+
+            case MQTT_EVENT_DATA:
+                ESP_LOGI(TAG, "MQTT_EVENT_DATA");
+                ESP_LOGI(TAG, "TOPIC=%.*s", event->topic_len, event->topic);
+                ESP_LOGI(TAG, "DATA=%.*s", event->data_len, event->data);
+                break;
+
+            case MQTT_EVENT_BEFORE_CONNECT: ESP_LOGW(TAG, "MQTT_EVENT_BEFORE_CONNECT"); break;
+            case MQTT_EVENT_DELETED:        ESP_LOGW(TAG, "MQTT_EVENT_DELETED");        break;
+            case MQTT_USER_EVENT:           ESP_LOGW(TAG, "MQTT_USER_EVENT");           break;
+
+            case MQTT_EVENT_ERROR:
+                ESP_LOGI(TAG, "MQTT_EVENT_ERROR");
+                ESP_LOGI(TAG, "MQTT5 return code is %d", event->error_handle->connect_return_code);
+                if (event->error_handle->error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT) {
+                    log_error_if_nonzero("reported from esp-tls", event->error_handle->esp_tls_last_esp_err);
+                    log_error_if_nonzero("reported from tls stack", event->error_handle->esp_tls_stack_err);
+                    log_error_if_nonzero("captured as transport's socket errno",  event->error_handle->esp_transport_sock_errno);
+                    ESP_LOGI(TAG, "Last errno string (%s)", strerror(event->error_handle->esp_transport_sock_errno));
+                }
+                break;
+
+            default:
+                ESP_LOGI(TAG, "Other event id:%d", event->event_id);
+                break;
+        }
+        return;
+    }
+
+    ESP_LOGW(TAG, "Unhandled event:\n  Base: `%s`\n  ID: %ld", event_base, event_id);
+}
+
+
+void gpioInit() {
+    static const char *TAG = "GPIO Init";
+
+    //configure default pin states
+    gpio_reset_pin(SCK);
+    gpio_reset_pin(MISO);
+    gpio_reset_pin(MOSI);
+
+    gpio_reset_pin(CS1);
+    gpio_reset_pin(RST1);
+    gpio_reset_pin(DIO01);
+    gpio_reset_pin(CS2);
+    gpio_reset_pin(RST2);
+    gpio_reset_pin(DIO02);
+    gpio_reset_pin(CS3);
+    gpio_reset_pin(RST3);
+    gpio_reset_pin(DIO03);
+    gpio_reset_pin(CS4);
+    gpio_reset_pin(RST4);
+    gpio_reset_pin(DIO04);
+
+    gpio_reset_pin(SDA);
+    gpio_reset_pin(SCL);
+    
+    gpio_reset_pin(STATUS_LED);
+
+    gpio_reset_pin(NRF_IRQ);
+    gpio_reset_pin(NRF_CE);
+    gpio_reset_pin(NRF_CS);
+
+    gpio_reset_pin(TX1);
+    gpio_reset_pin(RX1);
+    gpio_reset_pin(IRG_01);
+
+    gpio_reset_pin(RF_IN);
+    gpio_reset_pin(RF_OUT);
+    
+    gpio_reset_pin(SD_SCK);
+    gpio_reset_pin(SD_CS);
+    gpio_reset_pin(SD_MOSI);
+    gpio_reset_pin(SD_MISO);
+
+    ESP_LOGI(TAG, "All pins reset");
+
+    //TODO configure all pins
+    //gpio_config_t tmp = {
+    //    .
+    //}
+
+    gpio_set_direction(STATUS_LED, GPIO_MODE_INPUT_OUTPUT);
+
+    //enable gpio interupts
+    gpio_set_intr_type(DIO01, GPIO_INTR_POSEDGE);
+    gpio_set_intr_type(DIO04, GPIO_INTR_POSEDGE);
+    gpio_intr_enable(DIO01);
+    gpio_intr_enable(DIO04);
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add(DIO01, gpio_isr_handler, (void*) DIO01);
+    gpio_isr_handler_add(DIO04, gpio_isr_handler, (void*) DIO04);
+    ESP_LOGI(TAG, "All pins configured");
+
+    mqttLog("GPIO configured", MQTT_SEVERITY_SUCC);
+}
+
+void lcdInit() {
+    static const char *TAG = "LCD Init";
+    ESP_LOGW(TAG, "Not implemented yet");
+
+    mqttLog("LCD configured", MQTT_SEVERITY_SUCC);
+}
+
+void sdInit() {
+    static const char *TAG = "SD Init";
+    ESP_LOGW(TAG, "Not implemented yet");
+
+    mqttLog("SD configured", MQTT_SEVERITY_SUCC);
+}
+
+void wifiInit() {
+    static const char *TAG = "WiFi Init";
+
+    ESP_LOGI(TAG, "Starting WiFi");
+
+    esp_netif_create_default_wifi_sta();
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    ESP_LOGI(TAG, "WiFi initialized");
+
+    //register default event loop handler
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &eventLoopHandler, NULL, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &eventLoopHandler, NULL, NULL));
+
+    ESP_LOGI(TAG, "WiFi event loop handlers registered");
+
+    //mostly default wifi settings
+    wifi_config_t wifi_config = {
+        .sta = {
+            .ssid = WIFI_SSID,
+            .password = WIFI_PASS,
+        },
+    };
+
+    //start wifi in station mode
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA) );
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config) );
+    ESP_ERROR_CHECK(esp_wifi_start() );
+
+    ESP_LOGI(TAG, "WiFi started in station mode");
+
+    //wait for wifi to connect of fail
+    wifi_event_group = xEventGroupCreate();
+    EventBits_t bits = xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
+    if (bits & WIFI_CONNECTED_BIT)
+        ESP_LOGI(TAG, "Connected to AP SSID: %s pswd: %s", WIFI_SSID, WIFI_PASS);
+    else if (bits & WIFI_FAIL_BIT) {
+        ESP_LOGW(TAG, "Failed to connect to SSID: %s pswd: %s", WIFI_SSID, WIFI_PASS);
+        while(true);
+    }
+    else {
+        ESP_LOGE(TAG, "UNEXPECTED EVENT");
+        while(true);
+    }
+
+    std::string msg = WIFI_SSID;
+    msg = "Connected to '" + msg + "'. IP: " + ip_addr;
+    mqttLog(msg);
+}
+
+void mqttInit() {
+    static const char *TAG = "MQTT Init";
+
+    esp_mqtt5_connection_property_config_t connect_property = {
+        .session_expiry_interval = 10,
+        .maximum_packet_size = 1024,
+        .receive_maximum = 65535,
+        .topic_alias_maximum = 2,
+        .request_resp_info = true,
+        .request_problem_info = true,
+        .will_delay_interval = 10,
+        .message_expiry_interval = 10,
+        .payload_format_indicator = true,
+        .response_topic = "/test/response",
+        .correlation_data = "123456",
+        .correlation_data_len = 6,
+    };
+
+    esp_mqtt_client_config_t mqtt5_cfg = {
+        .broker = {
+            .address = {
+                .uri = "mqtt://192.168.1.176",
+            }
+        },
+        .session = {
+            .last_will = {
+                .topic = "/topic/will",
+                .msg = "I will leave",
+                .msg_len = 12,
+                .qos = 1,
+                .retain = true,
+            },
+            .protocol_ver = MQTT_PROTOCOL_V_5,
+        },
+        .network = {
+            .disable_auto_reconnect = true,
+        },
+    };
+
+    mqtt_client = esp_mqtt_client_init(&mqtt5_cfg);
+    ESP_ERROR_CHECK(esp_mqtt_client_register_event(mqtt_client, (esp_mqtt_event_id_t)ESP_EVENT_ANY_ID, eventLoopHandler, NULL));
+    esp_mqtt_client_start(mqtt_client);
+
+    mqttLog("MQTT configured", MQTT_SEVERITY_SUCC);
+}
+
+void sntpInit() {
+    static const char *TAG = "SNTPInit";
+
+    //default SNTP config
+    esp_sntp_config_t config = {
+        .smooth_sync = false,
+        .server_from_dhcp = false,
+        .wait_for_sync = true,
+        .start = true,
+        .sync_cb = NULL,
+        .renew_servers_after_new_IP = false,
+        .ip_event_to_renew = IP_EVENT_STA_GOT_IP,
+        .index_of_first_server = 0,
+        .num_of_servers = (1),
+        .servers = "cz.pool.ntp.org",   //TODO configurable
+    };
+    esp_netif_sntp_init(&config);
+
+    //wait max 10s for NTP sync
+    if (esp_netif_sntp_sync_wait(pdMS_TO_TICKS(10000)) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to connect to NTP server");
+        mqttLog("Failed to connect to NTP server", MQTT_SEVERITY_ERROR);
+        return;
+    }
+
+    //set timezone
+    setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
+    tzset();
+
+    std::string curr_time = getTimeStr();
+    ESP_LOGI(TAG, "Current time: %s", curr_time.c_str());
+
+    mqttLog("NTP configured. Current time: " + curr_time, MQTT_SEVERITY_SUCC);
+}
+
+
+void ledStatusTask(void *args) {
+    static const char *TAG = "LED Status Task";
+    mqttLog("LED status task started", MQTT_SEVERITY_SUCC);
 
     //setup default values
-    uint32_t id = PTRN_ID_ERR;
+    uint32_t id = PTRN_ID_INIT;
 
     while (true) {
-        for (int i = 0; i < blink_patterns[id][0]; i++) {
-            gpio_set_level(STATUS_LED, 1);
-            vTaskDelay(pdMS_TO_TICKS(blink_patterns[id][1] * 10));
-            gpio_set_level(STATUS_LED, 0);
-            vTaskDelay(pdMS_TO_TICKS(100));
+        xTaskNotifyWait(0, 0, &id, pdMS_TO_TICKS(blink_patpern_list[id].wait));
+
+        //send alive msg on idle
+        if (id == PTRN_ID_IDLE) {
+            mqtt_data_queue.write({.path = MQTT_ALIVE_PATH, .data = getTimeStr()});
         }
-        xTaskNotifyWait(0, 0, &id, pdMS_TO_TICKS(blink_patterns[id][2]* 100));
+
+        for (int i = 0; i < blink_patpern_list[id].cnt; i++) {
+            gpio_set_level(STATUS_LED, 1);
+            vTaskDelay(pdMS_TO_TICKS(blink_patpern_list[id].on_time));
+            gpio_set_level(STATUS_LED, 0);
+            vTaskDelay(pdMS_TO_TICKS(blink_patpern_list[id].off_time));
+        }
+    }
+}
+
+void lcdTask(void *args) {
+    static const char* TAG = "LCD Task";
+
+    ESP_LOGW(TAG, "Not implemented yet");
+    mqttLog("LCD Task not implemented", MQTT_SEVERITY_ERROR);
+
+    while(true) {
+        vTaskDelay(portMAX_DELAY);
+    }
+}
+
+/** @brief Sync time every hour */
+void sntpTask (void *args) {
+    static const char* TAG = "SNTP Task";
+
+    mqttLog("SNTP sync task started", MQTT_SEVERITY_SUCC);
+
+    while(true) {
+        sntp_sync_time(NULL);
+        ESP_LOGI(TAG, "Time synced.");
+        mqttLog("Time synced", MQTT_SEVERITY_INFO);
+        vTaskDelay(pdMS_TO_TICKS(3600000));
+    }
+}
+
+void mqttTask(void *args) {
+    static const char* TAG = "MQTT Task";
+
+    ESP_LOGI(TAG, "MQTT task started");
+    mqttLog("MQTT publish task started", MQTT_SEVERITY_SUCC);
+
+    mqtt_queue_data_t data;
+
+    while(true) {
+        //wait for any queued message
+        data = mqtt_data_queue.read();
+        ESP_LOGI(TAG, "Queued message:\n\t%s: %s", data.path.c_str(), data.data.c_str());
+        esp_mqtt_client_publish(mqtt_client, data.path.c_str(), data.data.c_str(), 0, 1, 1);
+        data.path.clear();
+        data.data.clear();
     }
 }
 
 
-void configure_lora(SX127X *lora, float freq, uint8_t sync_word, uint16_t preamble_len, uint8_t bw, uint8_t sf, uint8_t cr) {
+void configureLora(SX127X *lora, float freq, uint8_t sync_word, uint16_t preamble_len, uint8_t bw, uint8_t sf, uint8_t cr) {
+    static const char *TAG = "LoRa config";
+
     //register callbacks
     lora->registerMicros(micros);
     lora->registerDelay(delay);
@@ -178,44 +719,65 @@ void configure_lora(SX127X *lora, float freq, uint8_t sync_word, uint16_t preamb
 
     uint8_t rc = lora->begin(freq, sync_word, preamble_len, bw, sf, cr);
     if (rc) {
-        xTaskNotify(status_task_handle, PTRN_ID_ERR, eSetValueWithOverwrite);
-        printf("434 BEGIN ERROR: %d\n", rc);
-        while(true);
+        xTaskNotify(led_task_handle, PTRN_ID_ERR, eSetValueWithOverwrite);
+        ESP_LOGE(TAG, "BEGIN ERROR: %d", rc);
+        mqttLog("LoRa (" + std::to_string(freq) + "MHz) configuration failed (" + std::to_string(rc), MQTT_SEVERITY_ERROR);
+        return;
     }
-    rc = lora->getVersion();
-    printf("434 Chip version: 0x%02X\n", rc);
+
+    ESP_LOGI(TAG, "LoRa configured: 0x%02X", lora->getVersion());
+
+    mqttLog(std::string("LoRa module configured (" + std::to_string(freq) + "MHz)"), MQTT_SEVERITY_SUCC);
 }
 
 
 extern "C" void app_main() {
     static const char* TAG = "main";
 
-    gpio_reset_pin(STATUS_LED);
-    gpio_set_direction(STATUS_LED, GPIO_MODE_INPUT_OUTPUT);
+    //configure all gpio pins
+    gpioInit();
 
-    //create all tasks
-    xTaskCreate(status_task, "status_task", 344, nullptr, 20, &status_task_handle);
-    xTaskNotify(status_task_handle, PTRN_ID_INIT, eSetValueWithOverwrite);
+    //create default led task
+    xTaskCreate(ledStatusTask, "ledStatusTask", 2048, nullptr, 99, &led_task_handle);
+    xTaskNotify(led_task_handle, PTRN_ID_INIT, eSetValueWithOverwrite);
+
+    delay(2000);
+
+    //initialize nvs partition
+    auto ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+    ESP_LOGI(TAG, "NVS initialized");
+
+    //initialize tcp/ip stack
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_LOGI(TAG, "TCP/IP stack initialized");
+
+    //create default even loop
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+
+    //configure and setup lcd
+    lcdInit();
+    xTaskCreate(lcdTask, "lcdTask", 2048, nullptr, 1, &lcd_task_handle);
+
+    //configure and setup sd card
+    sdInit();
+    //TODO sd task
+
+    //configure and connect to wifi
+    wifiInit();
+
+    //initialize SNTP and sync with NTP server
+    sntpInit();
+    xTaskCreate(sntpTask, "SNTPTask", 2048, nullptr, 1, &sntp_task_handle);
 
 
-    ESP_LOGD(TAG, "App start");
-    ESP_LOGD(TAG, "Reset all pins");
-
-
-    //configure default pin states
-    gpio_reset_pin(SCK);
-    gpio_reset_pin(MISO);
-    gpio_reset_pin(MOSI);
-    gpio_reset_pin(CS1);
-    gpio_reset_pin(RST1);
-    gpio_reset_pin(DIO01);
-    gpio_reset_pin(CS4);
-    gpio_reset_pin(RST4);
-    gpio_reset_pin(DIO04);
-    gpio_reset_pin(SD_SCK);
-    gpio_reset_pin(SD_CS);
-    gpio_reset_pin(SD_MOSI);
-    gpio_reset_pin(SD_MISO);
+    //configure and subscribe to mqtt server
+    mqttInit();
+    xTaskCreate(mqttTask, "MQTTTask", 2048, nullptr, 1, &mqtt_task_handle);
 
 
     //configure SPI
@@ -227,12 +789,12 @@ extern "C" void app_main() {
         .quadhd_io_num = -1,
         .max_transfer_sz = 0
     };
-    auto ret = spi_bus_initialize(SPI3_HOST, &buscfg, 0);
+    ret = spi_bus_initialize(SPI3_HOST, &buscfg, 0);
     ESP_ERROR_CHECK(ret);
 
     spi_device_interface_config_t devcfg = {
         .mode = 0,
-        .clock_speed_hz = 10000000,
+        .clock_speed_hz = 20000000,
         .spics_io_num = -1,
         .flags = 0,
         .queue_size = 1,
@@ -241,8 +803,8 @@ extern "C" void app_main() {
     ret = spi_bus_add_device(SPI3_HOST, &devcfg, &dev_handl);
     ESP_ERROR_CHECK(ret);
 
-    configure_lora(&lora_434, 434.0, 0x12, 8, LORA_BANDWIDTH_125kHz, LORA_SPREADING_FACTOR_9, LORA_CODING_RATE_4_7);
-    configure_lora(&lora_868, 868.0, 0x12, 8, LORA_BANDWIDTH_125kHz, LORA_SPREADING_FACTOR_9, LORA_CODING_RATE_4_7);
+    configureLora(&lora_434, 434.0, 0x12, 8, LORA_BANDWIDTH_125kHz, LORA_SPREADING_FACTOR_9, LORA_CODING_RATE_4_7);
+    configureLora(&lora_868, 868.0, 0x12, 8, LORA_BANDWIDTH_125kHz, LORA_SPREADING_FACTOR_9, LORA_CODING_RATE_4_7);
 
 
     uint8_t freq[3] = {0};
@@ -252,19 +814,10 @@ extern "C" void app_main() {
     lora_868.readRegistersBurst(REG_FRF_MSB, freq, 3);
     ESP_LOGI(TAG, "868 freq: 0x%02X%02X%02X", freq[0], freq[1], freq[2]);
 
-
-    //enable gpio interupts
-    gpio_set_intr_type(DIO01, GPIO_INTR_POSEDGE);
-    gpio_set_intr_type(DIO04, GPIO_INTR_POSEDGE);
-    gpio_intr_enable(DIO01);
-    gpio_intr_enable(DIO04);
-    gpio_install_isr_service(0);
-    gpio_isr_handler_add(DIO01, gpio_isr_handler, (void*) DIO01);
-    gpio_isr_handler_add(DIO04, gpio_isr_handler, (void*) DIO04);
-
-
     //init done -> change pattern to idle
-    xTaskNotify(status_task_handle, PTRN_ID_IDLE, eSetValueWithOverwrite);
+    xTaskNotify(led_task_handle, PTRN_ID_IDLE, eSetValueWithOverwrite);
+    //once everything is done and working, create default alive task
+    //TODO
 
 
     lora_868.setMode(SX127X_OP_MODE_SLEEP);
@@ -293,8 +846,6 @@ extern "C" void app_main() {
             lora_434.clearIrqFlags();
             printf("Received payload: %s\n", payload);
             printf("Total bytes received: %lu\n", bytes_total);
-            ESP_LOGI(TAG, "Status stack: %u", uxTaskGetStackHighWaterMark(status_task_handle));
-
         }
         if (irq2) {
             irq2 = false;
@@ -308,5 +859,6 @@ extern "C" void app_main() {
             irq4 = false;
 
         }
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
 }
