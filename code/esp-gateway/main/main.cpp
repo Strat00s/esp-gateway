@@ -12,6 +12,10 @@
 #include <string.h>
 #include <string>
 #include <vector>
+#include <array>
+#include <queue>
+#include <deque>
+#include <algorithm>
 
 #include <esp_log.h>
 #include "driver/gpio.h"
@@ -34,6 +38,7 @@
 
 #include "libs/sx127x.hpp"
 #include "libs/simpleQueue.hpp"
+#include "libs/simpleContainer.hpp"
 #include "wifi_cfg.h"
 
 
@@ -53,7 +58,7 @@
 #include <esp_netif_sntp.h>
 
 
-//pin defines
+/*----(Pin defines)----*/
 //I2C
 #define SDA GPIO_NUM_6
 #define SCL GPIO_NUM_7
@@ -93,48 +98,55 @@
 #define SD_MOSI GPIO_NUM_11
 #define SD_CS   GPIO_NUM_10
 
-//blink pattern ids
-#define PTRN_ID_ERR  0
-#define PTRN_ID_IDLE 1
-#define PTRN_ID_INIT 2
 
+/*----(WiFi config)----*/
 //wifi config
 #define WIFI_SSID TEST_WIFI_SSID
 #define WIFI_PASS TEST_WIFI_PASS
 #define WIFI_MAXIMUM_RETRY  5
 #define WIFI_CONNECTED_BIT         BIT0
 #define WIFI_FAIL_BIT              BIT1
-static int s_retry_num = 0;
-//esp_netif_t *netif_interface;
-esp_netif_ip_info_t ip_info;
-std::string ip_addr;
 
 
-#define MQTT_ID          0
-#define MQTT_NAME        "ESP32"
-#define MQTT_ROOT        "/gateway"
-#define MQTT_NODES_PATH  MQTT_ROOT "/NODES"
-#define MQTT_NODE_PATH   MQTT_NODES_PATH "/0"
-#define MQTT_IP_PATH     MQTT_NODE_PATH  "/IP"
-#define MQTT_CONN_PATH   MQTT_NODE_PATH  "/Connected"
-#define MQTT_STATUS_PATH MQTT_NODE_PATH  "/Status"
-#define MQTT_CMD_PATH    MQTT_NODE_PATH  "/CMD"
-#define MQTT_ALIVE_PATH  MQTT_NODE_PATH  "/Alive"
-#define MQTT_LA_PATH     MQTT_NODE_PATH  "/Last_Action"
+/*----(MQTT config)----*/
+//main node topics and variables
+#define MQTT_ID           0
+#define MQTT_NAME         "ESP32"
+#define MQTT_ROOT         "/gateway"
+#define MQTT_NODES_PATH   MQTT_ROOT       "/NODES"
+#define MQTT_NODE_PATH    MQTT_NODES_PATH "/0"
+#define MQTT_IP_PATH      MQTT_NODE_PATH  "/IP"
+#define MQTT_CONN_PATH    MQTT_NODE_PATH  "/Connected"
+#define MQTT_STATUS_PATH  MQTT_NODE_PATH  "/Status"
+#define MQTT_CMD_PATH     MQTT_NODE_PATH  "/CMD"
+#define MQTT_ALIVE_PATH   MQTT_NODE_PATH  "/Alive"
+#define MQTT_LA_PATH      MQTT_NODE_PATH  "/Last_Action"
+//routing topics
+#define MQTT_RULE_PATH    MQTT_ROOT       "/Rules"
+#define MQTT_FWD_PATH     MQTT_RULE_PATH  "/+/fwd"
 
-#define MQTT_ROUTING_PATH MQTT_ROOT "/Routing"
-
+//mqtt status severity
 #define MQTT_SEVERITY_SUCC    0
 #define MQTT_SEVERITY_INFO    1
 #define MQTT_SEVERITY_WARNING 2
 #define MQTT_SEVERITY_ERROR   3
 
 
-volatile bool irq1 = false;
-volatile bool irq2 = false;
-volatile bool irq3 = false;
-volatile bool irq4 = false;
+//interfaces
+#define INTERFACE_LORA_131M 0
+#define INTERFACE_LORA_434M 1
+#define INTERFACE_LORA_868M 2
+#define INTERFACE_LORA_2_4G 3
+#define INTERFACE_ESPNOW    4
+#define INTERFACE_NRF24     5
+#define INTERFACE_RF43      6
+#define INTERFACE_WIFI      7
 
+
+//blink pattern ids
+#define PTRN_ID_ERR  0
+#define PTRN_ID_IDLE 1
+#define PTRN_ID_INIT 2
 
 
 /*----(Instances)----*/
@@ -142,16 +154,34 @@ SX127X lora_434(CS1, RST1, DIO01);
 SX127X lora_868(CS4, RST4, DIO04);
 
 spi_device_handle_t dev_handl;
-
 esp_mqtt_client_handle_t mqtt_client;
-
+esp_netif_ip_info_t ip_info;
 
 /*----(Data structures)----*/
+//node struct
+typedef struct {
+    std::string name;
+    uint8_t interface;
+    uint8_t schema[16];
+    std::vector<uint8_t> commands;
+} node_entry_t;
+SimpleContainer<node_entry_t> node_list;
+
+//rule struct
+typedef struct {
+    std::string name;               //cmd name
+    std::vector<uint16_t> node_ids;  //node to which this command should be forwarded to
+} rule_entry_t;
+SimpleContainer<rule_entry_t> rule_list;
+
 //mqtt publish queue struct
 typedef struct {
-    std::string path;
+    std::string topic;
     std::string data;
+    uint8_t publish = 1;
 } mqtt_queue_data_t;
+//simple queue for mqtt task to send/receive data
+SimpleQueue<mqtt_queue_data_t> mqtt_data_queue;
 
 //led blink patterns
 struct blink_paptern {
@@ -160,7 +190,6 @@ struct blink_paptern {
     uint32_t off_time;
     uint32_t wait;
 };
-
 static blink_paptern blink_patpern_list[] = {
     {   //PTRN_ID_ERR
         .cnt      = 5,
@@ -182,23 +211,29 @@ static blink_paptern blink_patpern_list[] = {
     },
 };
 
-
-/*----(Task)----*/
+//task handles
 static TaskHandle_t led_task_handle;
 static TaskHandle_t lcd_task_handle;
 static TaskHandle_t sntp_task_handle;
 static TaskHandle_t mqtt_task_handle;
 
-/*----(Synchronization structures)----*/
 //wifi event group
 static EventGroupHandle_t wifi_event_group;
 
 
-//TODO LED task queue
-SimpleQueue<mqtt_queue_data_t> mqtt_data_queue;
+/*----(Rest of variables)----*/
+//wifi
+static int s_retry_num = 0;
+std::string ip_addr;
+
+//irq variables
+volatile bool irq1 = false;
+volatile bool irq2 = false;
+volatile bool irq3 = false;
+volatile bool irq4 = false;
 
 
-
+//main callbacks
 void pinMode(uint8_t pin, uint8_t mode) {
     gpio_set_direction((gpio_num_t)pin, (gpio_mode_t)mode);
 }
@@ -258,6 +293,11 @@ static void IRAM_ATTR gpio_isr_handler(void* arg) {
 }
 
 
+//helper functions
+/** @brief Get current time as a string
+ * 
+ * @return std::string - DD.MM.YYYY HH:MM:SS
+ */
 std::string getTimeStr() {
     time_t now;
     time(&now);
@@ -268,15 +308,15 @@ std::string getTimeStr() {
     return std::string(buf);
 }
 
-/** @brief Add messages to be publish to a publish queue
+/** @brief Add messages to be published to mqtt data queue
  * 
- * @param path Path to which to publish the data
+ * @param topic Path to which to publish the data
  * @param data Data to be published
  * @param timeout Timeout in ticks how long to wait if queue is full
  */
-void mqttPublishQueue(std::string path, std::string data, uint32_t timeout = 10) {
+void mqttPublishQueue(std::string topic, std::string data, uint32_t timeout = 10) {
     mqtt_queue_data_t queue_data = {
-        .path = path,
+        .topic = topic,
         .data = data,
     };
 
@@ -285,7 +325,7 @@ void mqttPublishQueue(std::string path, std::string data, uint32_t timeout = 10)
 
 /** @brief Simple logging to mqtt 
  * 
- * @param msg Message to write to status path
+ * @param msg Message to write to status topic
  * @param severity severity prefix
  * @param timeout Timeout in ticks how long to wait if queue is full
  */
@@ -315,12 +355,10 @@ void mqttLog(std::string msg, uint8_t severity = MQTT_SEVERITY_INFO, uint32_t ti
 
 static void log_error_if_nonzero(const char *message, int error_code) {
     static const char *TAG = "log_error";
-    
-    if (error_code != 0) {
+    if (error_code != 0)
         ESP_LOGE(TAG, "Last error %s: 0x%x", message, error_code);
-    }
 }
-//default esp_event loop handler
+//default generic esp_event loop handler
 static void eventLoopHandler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
     static const char *TAG = "Event Handler";
 
@@ -377,14 +415,21 @@ static void eventLoopHandler(void* arg, esp_event_base_t event_base, int32_t eve
             case MQTT_EVENT_CONNECTED: {
                 ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
 
-                //subscribe to and publish everything
+                //publish default structure of everything
+                mqttPublishQueue(MQTT_NODES_PATH, "0");
+                mqttPublishQueue(MQTT_RULE_PATH, "0");
+
+
+                //publishNodes();
                 mqttPublishQueue(MQTT_NODES_PATH, "1");
                 mqttPublishQueue(MQTT_NODE_PATH, MQTT_NAME);
                 mqttPublishQueue(MQTT_IP_PATH, ip_addr);
-                mqttPublishQueue(MQTT_CONN_PATH, "TODO");
-                mqttPublishQueue(MQTT_CMD_PATH, "TODO");
-                mqttPublishQueue(MQTT_ALIVE_PATH, "TODO");
-                mqttPublishQueue(MQTT_LA_PATH, "TODO");
+                mqttPublishQueue(MQTT_CMD_PATH, "None");
+                mqttPublishQueue(MQTT_LA_PATH, "None");
+
+                //subscribe to everything
+                esp_mqtt_client_subscribe(mqtt_client, MQTT_CMD_PATH, 0);
+                esp_mqtt_client_subscribe(mqtt_client, MQTT_RULE_PATH "/#", 0);
                 break;
             }
 
@@ -393,11 +438,20 @@ static void eventLoopHandler(void* arg, esp_event_base_t event_base, int32_t eve
             case MQTT_EVENT_UNSUBSCRIBED: ESP_LOGI(TAG, "MQTT_EVENT_UNSUBSCRIBED, msg_id=%d", event->msg_id); break;
             case MQTT_EVENT_PUBLISHED:    ESP_LOGI(TAG, "MQTT_EVENT_PUBLISHED, msg_id=%d", event->msg_id);    break;
 
-            case MQTT_EVENT_DATA:
+            case MQTT_EVENT_DATA: {
                 ESP_LOGI(TAG, "MQTT_EVENT_DATA");
                 ESP_LOGI(TAG, "TOPIC=%.*s", event->topic_len, event->topic);
                 ESP_LOGI(TAG, "DATA=%.*s", event->data_len, event->data);
+                mqtt_queue_data_t data = {
+                    .topic = std::string(event->topic),
+                    .data = std::string(event->data),
+                    .publish = 0
+                };
+                mqtt_data_queue.write(data);
+                data.data.clear();
+                data.topic.clear();
                 break;
+            }
 
             case MQTT_EVENT_BEFORE_CONNECT: ESP_LOGW(TAG, "MQTT_EVENT_BEFORE_CONNECT"); break;
             case MQTT_EVENT_DELETED:        ESP_LOGW(TAG, "MQTT_EVENT_DELETED");        break;
@@ -635,6 +689,56 @@ void sntpInit() {
     mqttLog("NTP configured. Current time: " + curr_time, MQTT_SEVERITY_SUCC);
 }
 
+void spiInit() {
+    spi_bus_config_t buscfg = {
+        .mosi_io_num = MOSI,
+        .miso_io_num = MISO,
+        .sclk_io_num = SCK,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+        .max_transfer_sz = 0
+    };
+    auto ret = spi_bus_initialize(SPI3_HOST, &buscfg, 0);
+    ESP_ERROR_CHECK(ret);
+
+    spi_device_interface_config_t devcfg = {
+        .mode = 0,
+        .clock_speed_hz = 20000000,
+        .spics_io_num = -1,
+        .flags = 0,
+        .queue_size = 1,
+        .pre_cb = NULL
+    };
+    ret = spi_bus_add_device(SPI3_HOST, &devcfg, &dev_handl);
+    ESP_ERROR_CHECK(ret);
+}
+
+void configureLora(SX127X *lora, float freq, uint8_t sync_word, uint16_t preamble_len, uint8_t bw, uint8_t sf, uint8_t cr) {
+    static const char *TAG = "LoRa config";
+
+    //register callbacks
+    lora->registerMicros(micros);
+    lora->registerDelay(delay);
+    lora->registerPinMode(pinMode, GPIO_MODE_INPUT_OUTPUT, GPIO_MODE_INPUT_OUTPUT);
+    lora->registerPinWrite(pinWrite);
+    lora->registerPinRead(pinRead);
+    lora->registerSPIStartTransaction(SPIBeginTransaction);
+    lora->registerSPIEndTransaction(SPIEndTransaction);
+    lora->registerSpiTransfer(SPITransfer);
+
+    uint8_t rc = lora->begin(freq, sync_word, preamble_len, bw, sf, cr);
+    if (rc) {
+        xTaskNotify(led_task_handle, PTRN_ID_ERR, eSetValueWithOverwrite);
+        ESP_LOGE(TAG, "BEGIN ERROR: %d", rc);
+        mqttLog("LoRa (" + std::to_string(freq) + "MHz) configuration failed (" + std::to_string(rc), MQTT_SEVERITY_ERROR);
+        return;
+    }
+
+    ESP_LOGI(TAG, "LoRa configured: 0x%02X", lora->getVersion());
+
+    mqttLog(std::string("LoRa module configured (" + std::to_string(freq) + "MHz)"), MQTT_SEVERITY_SUCC);
+}
+
 
 void ledStatusTask(void *args) {
     static const char *TAG = "LED Status Task";
@@ -648,7 +752,7 @@ void ledStatusTask(void *args) {
 
         //send alive msg on idle
         if (id == PTRN_ID_IDLE) {
-            mqtt_data_queue.write({.path = MQTT_ALIVE_PATH, .data = getTimeStr()});
+            mqtt_data_queue.write({.topic = MQTT_ALIVE_PATH, .data = getTimeStr()});
         }
 
         for (int i = 0; i < blink_patpern_list[id].cnt; i++) {
@@ -689,50 +793,53 @@ void mqttTask(void *args) {
     static const char* TAG = "MQTT Task";
 
     ESP_LOGI(TAG, "MQTT task started");
+    ESP_LOGI(TAG, "MQTT queue: %d", mqtt_data_queue.size());
     mqttLog("MQTT publish task started", MQTT_SEVERITY_SUCC);
 
     mqtt_queue_data_t data;
 
     while(true) {
         //wait for any queued message
-        data = mqtt_data_queue.read();
-        ESP_LOGI(TAG, "Queued message:\n\t%s: %s", data.path.c_str(), data.data.c_str());
-        esp_mqtt_client_publish(mqtt_client, data.path.c_str(), data.data.c_str(), 0, 1, 1);
-        data.path.clear();
         data.data.clear();
+        data.topic.clear();
+        data.publish = 0;
+        data = mqtt_data_queue.read();
+
+        if (data.publish) {
+            ESP_LOGI(TAG, "Queued publish message:\n\t%s: %s", data.topic.c_str(), data.data.c_str());
+            esp_mqtt_client_publish(mqtt_client, data.topic.c_str(), data.data.c_str(), 0, 1, 1);
+        }
+        else {
+            ESP_LOGI(TAG, "Queued received message:\n\t%s: %s", data.topic.c_str(), data.data.c_str());
+
+            //split entire topic path to individual topics
+            char delimiter = '/';
+            int part_cnt = std::count(data.topic.begin(), data.topic.end(), delimiter);
+            int start_index = 1;
+            std::vector<std::string> path;
+            for (int i = 0; i < part_cnt; i++) {
+                int end_index = data.topic.find(delimiter, start_index);
+                path.push_back(data.topic.substr(start_index, end_index - start_index));
+                start_index = end_index + 1;
+            }
+            if (data.topic.contains(MQTT_RULE_PATH)) {
+                ESP_LOGI(TAG, "New rule");
+            }
+        }
     }
 }
 
-
-void configureLora(SX127X *lora, float freq, uint8_t sync_word, uint16_t preamble_len, uint8_t bw, uint8_t sf, uint8_t cr) {
-    static const char *TAG = "LoRa config";
-
-    //register callbacks
-    lora->registerMicros(micros);
-    lora->registerDelay(delay);
-    lora->registerPinMode(pinMode, GPIO_MODE_INPUT_OUTPUT, GPIO_MODE_INPUT_OUTPUT);
-    lora->registerPinWrite(pinWrite);
-    lora->registerPinRead(pinRead);
-    lora->registerSPIStartTransaction(SPIBeginTransaction);
-    lora->registerSPIEndTransaction(SPIEndTransaction);
-    lora->registerSpiTransfer(SPITransfer);
-
-    uint8_t rc = lora->begin(freq, sync_word, preamble_len, bw, sf, cr);
-    if (rc) {
-        xTaskNotify(led_task_handle, PTRN_ID_ERR, eSetValueWithOverwrite);
-        ESP_LOGE(TAG, "BEGIN ERROR: %d", rc);
-        mqttLog("LoRa (" + std::to_string(freq) + "MHz) configuration failed (" + std::to_string(rc), MQTT_SEVERITY_ERROR);
-        return;
-    }
-
-    ESP_LOGI(TAG, "LoRa configured: 0x%02X", lora->getVersion());
-
-    mqttLog(std::string("LoRa module configured (" + std::to_string(freq) + "MHz)"), MQTT_SEVERITY_SUCC);
-}
 
 
 extern "C" void app_main() {
     static const char* TAG = "main";
+    node_entry_t this_node = {
+        .name = MQTT_NAME,
+        .interface = INTERFACE_WIFI,
+        .schema = {0},
+    };
+    this_node.schema[0] = 1;
+    node_list.addItem(MQTT_ID, this_node);
 
     //configure all gpio pins
     gpioInit();
@@ -777,32 +884,13 @@ extern "C" void app_main() {
 
     //configure and subscribe to mqtt server
     mqttInit();
-    xTaskCreate(mqttTask, "MQTTTask", 2048, nullptr, 1, &mqtt_task_handle);
+    xTaskCreate(mqttTask, "MQTTTask", 4096, nullptr, 1, &mqtt_task_handle);
 
 
-    //configure SPI
-    spi_bus_config_t buscfg = {
-        .mosi_io_num = MOSI,
-        .miso_io_num = MISO,
-        .sclk_io_num = SCK,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
-        .max_transfer_sz = 0
-    };
-    ret = spi_bus_initialize(SPI3_HOST, &buscfg, 0);
-    ESP_ERROR_CHECK(ret);
+    //configure and initialize spi
+    spiInit();
 
-    spi_device_interface_config_t devcfg = {
-        .mode = 0,
-        .clock_speed_hz = 20000000,
-        .spics_io_num = -1,
-        .flags = 0,
-        .queue_size = 1,
-        .pre_cb = NULL
-    };
-    ret = spi_bus_add_device(SPI3_HOST, &devcfg, &dev_handl);
-    ESP_ERROR_CHECK(ret);
-
+    //configure installed interface modules
     configureLora(&lora_434, 434.0, 0x12, 8, LORA_BANDWIDTH_125kHz, LORA_SPREADING_FACTOR_9, LORA_CODING_RATE_4_7);
     configureLora(&lora_868, 868.0, 0x12, 8, LORA_BANDWIDTH_125kHz, LORA_SPREADING_FACTOR_9, LORA_CODING_RATE_4_7);
 
@@ -814,10 +902,9 @@ extern "C" void app_main() {
     lora_868.readRegistersBurst(REG_FRF_MSB, freq, 3);
     ESP_LOGI(TAG, "868 freq: 0x%02X%02X%02X", freq[0], freq[1], freq[2]);
 
+
     //init done -> change pattern to idle
     xTaskNotify(led_task_handle, PTRN_ID_IDLE, eSetValueWithOverwrite);
-    //once everything is done and working, create default alive task
-    //TODO
 
 
     lora_868.setMode(SX127X_OP_MODE_SLEEP);

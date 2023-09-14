@@ -1,6 +1,5 @@
 #include <string>
 #include <queue>
-#include <FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/portmacro.h>
 
