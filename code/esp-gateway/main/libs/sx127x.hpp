@@ -357,8 +357,8 @@ private:
     uint8_t (*pinRead)(uint8_t pin);
     void (*delay)(uint32_t delay_ms);
     uint32_t (*micros)();
-    void (*SPIBeginTransaction)();
-    void (*SPIEndTransaction)();
+    void (*SPIBeginTransfer)();
+    void (*SPIEndTransfer)();
     /** @brief To be implemented by user. Transfer function for sending
      * and receiveing data over SPI
      *
@@ -368,7 +368,7 @@ private:
      * or will be filled with read data)
      * @param length Length of buffer
      */
-    void (*spiTransfer)(uint8_t addr, uint8_t *buffer, size_t length);
+    void (*SPITransfer)(uint8_t addr, uint8_t *buffer, size_t length);
 
     void setValidFrequency(float frequency);
 
@@ -383,9 +383,18 @@ public:
     void registerPinRead(uint8_t (*func)(uint8_t));
     void registerDelay(void (*func)(uint32_t));
     void registerMicros(uint32_t (*micros)());
-    void registerSPIStartTransaction(void (*func)());
-    void registerSPIEndTransaction(void (*func)());
-    void registerSpiTransfer(void (*func)(uint8_t, uint8_t *, size_t));
+    void registerSPIBeginTransfer(void (*func)());
+    void registerSPIEndTransfer(void (*func)());
+    /** @brief The underlying callback must be implemented by the user.
+     * Transfer function for sending and receiveing data over SPI.
+     *
+     * @param addr Register address. MSB of the address defines if it
+     * is read or write transaction (0 for read, 1 for write)
+     * @param buffer Buffer for in/out data (contains data to be written
+     * or will be filled with read data)
+     * @param length Length of buffer
+     */
+    void registerSPITransfer(void (*func)(uint8_t, uint8_t *, size_t));
 
 
     /** @brief Initialize module to it's default settings

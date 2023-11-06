@@ -249,11 +249,11 @@ void delay(uint32_t ms) {
 uint32_t micros() {
     return esp_timer_get_time();
 }
-void SPIBeginTransaction() {
+void SPIBeginTransfer() {
     auto ret = spi_device_acquire_bus(dev_handl, portMAX_DELAY);
     ESP_ERROR_CHECK(ret);
 }
-void SPIEndTransaction() {
+void SPIEndTransfer() {
     spi_device_release_bus(dev_handl);
 }
 void SPITransfer(uint8_t addr, uint8_t *buffer, size_t length) {
@@ -262,21 +262,19 @@ void SPITransfer(uint8_t addr, uint8_t *buffer, size_t length) {
     t.length = 8;
     t.tx_buffer = &addr;
     
-    auto ret = spi_device_polling_transmit(dev_handl, &t);
-    ESP_ERROR_CHECK(ret);
+    ESP_ERROR_CHECK(spi_device_polling_transmit(dev_handl, &t));
 
     memset(&t, 0, sizeof(t));
     t.length = length * 8;
 
     //write
-    if (addr & 0b10000000)
+    if (addr & SX127X_WRITE_MASK)
         t.tx_buffer = buffer;
     //read
     else
         t.rx_buffer = buffer;
 
-    ret = spi_device_polling_transmit(dev_handl, &t);
-    ESP_ERROR_CHECK(ret);
+    ESP_ERROR_CHECK(spi_device_polling_transmit(dev_handl, &t));
 }
 
 
@@ -722,9 +720,9 @@ void configureLora(SX127X *lora, float freq, uint8_t sync_word, uint16_t preambl
     lora->registerPinMode(pinMode, GPIO_MODE_INPUT_OUTPUT, GPIO_MODE_INPUT_OUTPUT);
     lora->registerPinWrite(pinWrite);
     lora->registerPinRead(pinRead);
-    lora->registerSPIStartTransaction(SPIBeginTransaction);
-    lora->registerSPIEndTransaction(SPIEndTransaction);
-    lora->registerSpiTransfer(SPITransfer);
+    lora->registerSPIBeginTransfer(SPIBeginTransfer);
+    lora->registerSPIEndTransfer(SPIEndTransfer);
+    lora->registerSPITransfer(SPITransfer);
 
     uint8_t rc = lora->begin(freq, sync_word, preamble_len, bw, sf, cr);
     if (rc) {

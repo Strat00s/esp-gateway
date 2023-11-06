@@ -66,18 +66,18 @@ void SX127X::registerMicros(uint32_t (*micros)()) {
     this->flags.single.has_micros = true;
 }
 
-void SX127X::registerSPIStartTransaction(void (*func)()) {
-    this->SPIBeginTransaction           = func;
+void SX127X::registerSPIBeginTransfer(void (*func)()) {
+    this->SPIBeginTransfer              = func;
     this->flags.single.has_spi_start_tr = true;
 }
 
-void SX127X::registerSPIEndTransaction(void (*func)()) {
-    this->SPIEndTransaction           = func;
+void SX127X::registerSPIEndTransfer(void (*func)()) {
+    this->SPIEndTransfer              = func;
     this->flags.single.has_spi_end_tr = true;
 }
 
-void SX127X::registerSpiTransfer(void (*func)(uint8_t, uint8_t *, size_t)) {
-    this->spiTransfer               = func;
+void SX127X::registerSPITransfer(void (*func)(uint8_t, uint8_t *, size_t)) {
+    this->SPITransfer               = func;
     this->flags.single.has_transfer = true;
 }
 
@@ -717,14 +717,14 @@ void SX127X::clearIrqFlags() {
 
 void SX127X::SPIMakeTransaction(uint8_t addr, uint8_t *data, size_t length) {
     if (this->flags.single.has_spi_start_tr)
-        this->SPIBeginTransaction();
+        this->SPIBeginTransfer();
 
     this->pinWrite(this->cs, this->low);
-    this->spiTransfer(addr, data, length);
+    this->SPITransfer(addr, data, length);
     this->pinWrite(this->cs, this->high);
 
     if (this->flags.single.has_spi_end_tr)
-        this->SPIEndTransaction();
+        this->SPIEndTransfer();
 }
 
 uint8_t SX127X::readRegister(uint8_t addr, uint8_t mask_lsb, uint8_t mask_msb) {
