@@ -2,45 +2,119 @@
 #include <stdio.h>
 
 
-#define SP_HEADER_LENGTH 7
-#define SP_DATA_LENGTH   256 - SP_HEADER_LENGTH
-
 #define SP_VERSION 1
 
+#define SP_OK                      0
 #define SP_ERR_INVALID_VERSION     1
 #define SP_ERR_INVALID_MSG_TYPE    2
 #define SP_ERR_INVALID_MSG_ID      3
 #define SP_ERR_DATA_TOO_LONG       4
 #define SP_ERR_INVALID_PACKET_SIZE 5
 #define SP_ERR_NULL                6
+#define SP_ERR_INVALID_DEVICE_TYPE 7
+#define SP_ERR_INVALID_MSG_TYPE    8
+#define SP_ERR_PACKET_CHECK_FAILED 9
+
+#define SP_MSG_PING          0
+#define SP_MSG_REGISTER      1
+#define SP_MSG_DEVICE_CONFIG 2
+#define SP_MSG_DATA          3
+#define SP_MSG_REQUEST       4
+#define SP_MSG_RESEND        5
+
+#define SP_TYPE_GATEWAY 0
+#define SP_TYPE_NODE    1
+#define SP_TYPE_LP_NODE 2
+
+
+#define SP_HEADER_LENGTH 8
+#define SP_DATA_LENGTH   256 - SP_HEADER_LENGTH
 
 #define SP_VERSION_POS  0
-#define SP_MSG_ID_POS   1
-#define SP_SRC_ADDR_POS 3
-#define SP_DST_ADDR_POS 4
-#define SP_SMG_TYPE_POS 5
-#define SP_DATA_LEN_POS 6
+#define SP_DEVICE_TYPE  1
+#define SP_MSG_ID_POS   2
+#define SP_SRC_ADDR_POS 4
+#define SP_DST_ADDR_POS 5
+#define SP_MSG_TYPE_POS 6
+#define SP_DATA_LEN_POS 7
+
+
+
+/*
+When sending a new message, message ID must be randomly generated (or at least last used ID cannot be used)
+When responding to a message, increase message ID and dela with possible overflows
+
+
+ADDR 0 -> reserved for new nodes
+ADDR 255 -> broadcasted to all nodes
+
+### Message types
+# Check if device is in network
+request:  ping (uint32_t timestamp)
+response: OK (timestamp back)
+
+
+# Adding new device
+request:  REGISTER
+resposne: DEVICE_CONFIG (device ID, secret key), ERR (8bit err code)
+response: OK, ERR(8bit err code)
+
+
+# Sending data:
+request:  send (data length, data)
+response  OK, ERR (8bit err code)
+
+
+# Requesting data:
+request:  data request (16bit data id)
+response: send (data length, data)
+response: OK, ERR (8bit err code)
+
+
+# Device types
+0 Gateway
+1 Node
+2 LP Node //is not expected to response
+
+
+*/
 
 
 class simpleProtocol {
 private:
     //uint8_t version              = 0;
-    //uint16_t msg_id              = 0;   //cannot be zero
-    //uint8_t src_address          = 0;
-    //uint8_t dst_address          = 0;
+    //uint16_t msg_id              = 0;   //cannot be zero, must
+    //uint8_t source_addr          = 0;
+    //uint8_t dest_addr          = 0;
     //uint8_t msg_type             = 0;
     //uint8_t data_length          = 0;
     //uint8_t data[SP_HEADER_LENGTH + SP_DATA_LENGTH] = {0};
 
     uint16_t lcg(uint16_t seed);
 
+    union Bits {
+        uint8_t all = 0;
+        struct bits {
+            uint8_t wrong_version  :1;
+            uint8_t wrong_dev_type :1;
+            uint8_t wrong_msg_type :1;
+            uint8_t data_too_long  :1;
+            uint8_t data_truncated :1;
+            uint8_t has_spi_start_tr   :1;
+            uint8_t has_spi_end_tr     :1;
+            uint8_t has_transfer       :1;
+        } single;
+    } flags;
+
+
     union {
         struct {
             uint8_t version;
+            uint8_t device_type;
             uint8_t msg_id_msb;
-            uint8_t msg_id_lsb;
-            uint8_t src_address;
-            uint8_t dst_address;
+            uint8_t msg_id_lsb; //cannot be zero, must differ from last sent message
+            uint8_t source_addr;
+            uint8_t dest_addr;
             uint8_t msg_type;
             uint8_t data_length;
             uint8_t data[SP_DATA_LENGTH];
@@ -50,9 +124,8 @@ private:
     
 
 public:
-    simpleProtocol(/* args */);
     simpleProtocol(uint8_t version);
-    simpleProtocol(uint8_t version, uint8_t src_address);
+    simpleProtocol(uint8_t version, uint8_t source_addr);
     ~simpleProtocol();
 
     //write to eeprom callback
@@ -60,41 +133,43 @@ public:
 
 
     void setVersion(uint8_t version)            {this->packet.fields.version = version;}
+    void setDeviceType(uint8_t device_type)     {this->packet.fields.device_type = device_type;}
     void setMessageId(uint16_t id);
-    void setSourceAddress(uint8_t address)      {this->packet.fields.src_address = address;}
-    void setDestinationAddress(uint8_t address) {this->packet.fields.dst_address = address;}
+    void setSourceAddress(uint8_t address)      {this->packet.fields.source_addr = address;}
+    void setDestinationAddress(uint8_t address) {this->packet.fields.dest_addr = address;}
     void setMessageType(uint8_t type)           {this->packet.fields.msg_type = type;}
     uint8_t setData(uint8_t *data, uint8_t length);
 
     uint8_t getVersion()            {return this->packet.fields.version;}
+    uint8_t getDeviceType()         {return this->packet.fields.device_type;}
     uint16_t getMessageId()         {return ((uint16_t)(this->packet.fields.msg_id_msb)) << 8 | (uint16_t)(this->packet.fields.msg_id_lsb);}
-    uint8_t getSourceAddress()      {return this->packet.fields.src_address;}
-    uint8_t getDestinationAddress() {return this->packet.fields.dst_address;}
+    uint8_t getSourceAddress()      {return this->packet.fields.source_addr;}
+    uint8_t getDestinationAddress() {return this->packet.fields.dest_addr;}
     uint8_t getMessageType()        {return this->packet.fields.msg_type;}
     uint8_t getDataLength()         {return this->packet.fields.data_length;}
     uint8_t *getData()              {return this->packet.fields.data;}
     uint8_t *getRawPacket()         {return this->packet.raw;}
 
 
-    /** @brief Read packet (raw data), validate and save header, save data.
+    /** @brief Check if stored packet has valid header and header data.
+     * Sets flags when field contain invalid values
+     * 
+     * @return SP_OK on succes, SP_ERR_PACKET_CHECK_FAILED on error
+     */
+    uint8_t checkPacket();
+
+    /** @brief Read packet (raw data), validate and save header and data.
+     * Runs checkPacket();
+     * Sets flag data_truncated when received data won't fit into provided buffer
      * 
      * @param  
      */
     uint8_t readPacket(uint8_t *raw, uint8_t length, bool force = false);
 
-    /** @brief Builds packet from header and data. Uses internal data array which is 256 bytes long.
-     * When setting/getting data, those are writen into this array after 56th byte (header length).
-     * This means that you can change data after building the packet. But if any header data are
-     * changed, you need to rebuild the packet again
-     * 
-     * @return Pointer to raw packet of data_length + SP_HEADER_LENGTH
-     */
-    uint8_t *buildPacket();
-    uint8_t *buildPacket(uint8_t msg_id, uint8_t dst, uint8_t msg_type);
-    uint8_t *buildPacket(uint8_t msg_id, uint8_t dst, uint8_t msg_type, uint8_t *data, uint8_t length);
-
     /** @brief Generate apropriate answer to received packet if possible. Used when custom handling functions not implemented
      * 
      */
     uint8_t *answer(uint8_t *data, uint8_t length);
+
+    void clearFlags();
 };
