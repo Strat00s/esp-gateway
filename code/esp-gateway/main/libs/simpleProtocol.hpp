@@ -82,27 +82,20 @@ response: OK, ERR (8bit err code)
 
 class simpleProtocol {
 private:
-    //uint8_t version              = 0;
-    //uint16_t msg_id              = 0;   //cannot be zero, must
-    //uint8_t source_addr          = 0;
-    //uint8_t dest_addr          = 0;
-    //uint8_t msg_type             = 0;
-    //uint8_t data_length          = 0;
-    //uint8_t data[SP_HEADER_LENGTH + SP_DATA_LENGTH] = {0};
 
     uint16_t lcg(uint16_t seed);
 
-    union Bits {
+    union {
         uint8_t all = 0;
-        struct bits {
+        struct {
             uint8_t wrong_version  :1;
             uint8_t wrong_dev_type :1;
             uint8_t wrong_msg_type :1;
             uint8_t data_too_long  :1;
             uint8_t data_truncated :1;
-            uint8_t has_spi_start_tr   :1;
-            uint8_t has_spi_end_tr     :1;
-            uint8_t has_transfer       :1;
+            uint8_t none1          :1;
+            uint8_t none2          :1;
+            uint8_t none3          :1;
         } single;
     } flags;
 
@@ -160,7 +153,7 @@ public:
 
     /** @brief Read packet (raw data), validate and save header and data.
      * Runs checkPacket();
-     * Sets flag data_truncated when received data won't fit into provided buffer
+     * Sets flag data_truncated when raw data are shroted than advertised packet length
      * 
      * @param  
      */
@@ -169,7 +162,7 @@ public:
     /** @brief Generate apropriate answer to received packet if possible. Used when custom handling functions not implemented
      * 
      */
-    uint8_t *answer(uint8_t *data, uint8_t length);
+    //uint8_t *answer(uint8_t *data, uint8_t length);
 
     void clearFlags();
 };

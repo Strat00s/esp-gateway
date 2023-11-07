@@ -83,12 +83,14 @@ uint8_t simpleProtocol::readPacket(uint8_t *raw, uint8_t length, bool force) {
     if (length < SP_HEADER_LENGTH)
         return SP_ERR_INVALID_PACKET_SIZE;
 
-    if (length - SP_HEADER_LENGTH < raw[SP_DATA_LEN_POS]) {
-        this->flags.single.data_truncated = 1;
-        raw[SP_DATA_LEN_POS] = length - SP_HEADER_LENGTH;
-    }
 
-    memcpy(this->packet.raw, raw, raw[SP_DATA_LEN_POS] + SP_HEADER_LENGTH);
+    if (raw[SP_DATA_LEN_POS] + SP_HEADER_LENGTH > length)
+        this->flags.single.data_too_long = 1;
+
+    if (length > raw[SP_DATA_LEN_POS] + SP_HEADER_LENGTH)
+        length = raw[SP_DATA_LEN_POS] + SP_HEADER_LENGTH;
+
+    memcpy(this->packet.raw, raw, length);
 
     return checkPacket();
 }
