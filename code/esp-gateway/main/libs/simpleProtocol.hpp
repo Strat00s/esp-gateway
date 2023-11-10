@@ -4,6 +4,177 @@
 
 #define SP_VERSION 1
 
+
+// VER DEV MIM MIL SAR DAR PRT M_T LEN DATA
+/*
+# Packet structure
+------------HEADER------------
+    VERSION             8b
+    DEVICE TYPE         8b
+    MESSAGE ID          16b
+    SOURCE ADDRESS      8b
+    DESTINATION ADDRESS 8b
+    PORT NUMBER         8b
+    MESSAGE TYPE        8b
+    DATA LENGTH         8b
+--------------DATA--------------
+    DATA...             256 - header
+
+
+# Predefined messages packet structure
+    Ping
+        VERSION             1
+        DEVICE TYPE         x
+        MESSAGE ID          n
+        SOURCE ADDRESS      y
+        DESTINATION ADDRESS z
+        PORT NUMBER         0
+        MESSAGE TYPE        PING
+        DATA LENGTH         0
+    Register
+        VERSION             1
+        DEVICE TYPE         x
+        MESSAGE ID          n
+        SOURCE ADDRESS      0
+        DESTINATION ADDRESS 255
+        PORT NUMBER         0
+        MESSAGE TYPE        REGISTER
+        DATA LENGTH         0
+    Device config
+        VERSION             1
+        DEVICE TYPE         G
+        MESSAGE ID          n+1
+        SOURCE ADDRESS      GATREWAY_ADDRESS
+        DESTINATION ADDRESS 0
+        PORT NUMBER         0
+        MESSAGE TYPE        CONFIG
+        DATA LENGTH         1
+        DATA...             DEVICE_ADDRESS
+    Data
+        VERSION             1
+        DEVICE TYPE         x
+        MESSAGE ID          n
+        SOURCE ADDRESS      y
+        DESTINATION ADDRESS z
+        PORT NUMBER         p
+        MESSAGE TYPE        DATA
+        DATA LENGTH         l
+        DATA...             CUSTOM (l bytes)
+    TODO Request
+        VERSION
+        DEVICE TYPE
+        MESSAGE ID
+        SOURCE ADDRESS
+        DESTINATION ADDRESS
+        PORT NUMBER
+        MESSAGE TYPE
+        DATA LENGTH
+        DATA...
+    TODO Resend
+        VERSION
+        DEVICE TYPE
+        MESSAGE ID
+        SOURCE ADDRESS
+        DESTINATION ADDRESS
+        PORT NUMBER
+        MESSAGE TYPE
+        DATA LENGTH
+        DATA...
+    Port advertisement
+        VERSION             1
+        DEVICE TYPE         x
+        MESSAGE ID          n
+        SOURCE ADDRESS      y
+        DESTINATION ADDRESS z
+        PORT NUMBER         0
+        MESSAGE TYPE        PORT_ADVERTISEMENT
+        DATA LENGTH         2 * l
+        DATA...             l pairs of PORT and DATA_TYPE
+            PORT      8b
+            DATA_TYPE 8b
+                PORT DIR  0bxx000000
+                DATA TYPE 0b00xxxxxx
+    Route solicitation
+        VERSION             1
+        DEVICE TYPE         G
+        MESSAGE ID          n
+        SOURCE ADDRESS      x
+        DESTINATION ADDRESS y
+        PORT NUMBER         0
+        MESSAGE TYPE        ROUTE_SOLICITATION
+        DATA LENGTH         2 + l
+        DATA...             LISTENER_ADDRESS, PORT and l extra PORTs
+            LISTENER_ADDRESS 8b
+            LISTEN_PORT      8b
+            EXTRA_PORTS      8b * l
+    Route anouncement
+        VERSION             1
+        DEVICE TYPE         x
+        MESSAGE ID          n
+        SOURCE ADDRESS      y
+        DESTINATION ADDRESS z
+        PORT NUMBER         0
+        MESSAGE TYPE        ROUTE_ANOUNCEMENT
+        DATA LENGTH         2 + l
+        DATA...             LISTENER_ADDRESS, PORT and l extra PORTs
+            LISTENER_ADDRESS 8b
+            LISTEN_PORT      8b
+            EXTRA_PORTS      8b * l
+    Combined
+        VERSION             1
+        DEVICE TYPE         x
+        MESSAGE ID          n
+        SOURCE ADDRESS      y
+        DESTINATION ADDRESS z
+        PORT NUMBER         0
+        MESSAGE TYPE        COMBINED
+        DATA LENGTH         ?
+        DATA...             shortened packets
+            PORT 8b
+            TYPE 8b
+            LEN  8b (l)
+            DATA 8b * l
+    Reset
+        VERSION             1
+        DEVICE TYPE         x
+        MESSAGE ID          n
+        SOURCE ADDRESS      y
+        DESTINATION ADDRESS z
+        PORT NUMBER         0
+        MESSAGE TYPE        RESET
+        DATA LENGTH         0
+    Status
+        VERSION             1
+        DEVICE TYPE         x
+        MESSAGE ID          n
+        SOURCE ADDRESS      y
+        DESTINATION ADDRESS z
+        PORT NUMBER         0
+        MESSAGE TYPE        STATUS
+        DATA LENGTH         l
+        DATA...             string of size l
+    ok
+        VERSION             1
+        DEVICE TYPE         x
+        MESSAGE ID          n+1
+        SOURCE ADDRESS      z
+        DESTINATION ADDRESS y
+        PORT NUMBER         0
+        MESSAGE TYPE        OK
+        DATA LENGTH         0
+    err
+        VERSION             1
+        DEVICE TYPE         x
+        MESSAGE ID          n+1
+        SOURCE ADDRESS      z
+        DESTINATION ADDRESS y
+        PORT NUMBER         0
+        MESSAGE TYPE        ERR
+        DATA LENGTH         1
+        DATA...             ERROR_CODE
+*/
+
+
 #define SP_OK                      0
 #define SP_ERR_INVALID_VERSION     1
 #define SP_ERR_INVALID_MSG_TYPE    2
@@ -22,13 +193,27 @@
 #define SP_MSG_REQUEST       4
 #define SP_MSG_RESEND        5
 #define SP_MSG_PORT_ADVERT   6  //advertise custom port for listening/accepting data on
+//...|ADVERT|x|PORT_TYPE_PAIR|...
+#define SP_MSG_ROUTE_SOLICIT 7  //when user manually routes ports and addresses, send this to output node
+//...|SOLIC|x|ADDRESS|PORT|PORT|...
+#define SP_MSG_ROUTE_ANOUNC  8  //anounc already known routes
+//...|R_ANOUNC|x|ADDRESS|PORT|PORT|...
+#define SP_MSG_COMBINED      9  //data contain multiple messages in format |TYPE|LEN|DATA|TYPE...
+#define SP_MSG_RESET         10 //
+#define SP_MSG_STATUS        11 //RAW string
+#define SP_MSG_OK            12
+#define SP_MSG_ERR           13
 
-#define SP_MSG_DATA_NONE   0
-#define SP_MSG_DATA_INT8   1
-#define SP_MSG_DATA_INT16  2
-#define SP_MSG_DATA_INT32  3
-#define SP_MSG_DATA_STR    4
-#define SP_MSG_DATA_CUSTOM 5
+#define SP_PORT_DATA_NONE   0
+#define SP_PORT_DATA_INT8   1
+#define SP_PORT_DATA_INT16  2
+#define SP_PORT_DATA_INT32  3
+#define SP_PORT_DATA_STR    4
+#define SP_PORT_DATA_CUSTOM 5
+
+#define SP_PORT_IN      0b00000000;
+#define SP_PORT_OUT     0b01000000;
+#define SP_PORT_INOUT   0b10000000;
 
 
 #define SP_TYPE_GATEWAY 0
@@ -55,15 +240,44 @@ When sending a new message, message ID must be randomly generated (or at least l
 When responding to a message, increase message ID and dela with possible overflows
 If node has adrress 0, it must listen on address 255
 
+Any message not using port 0, gateways must rebroadcast
+If message with n+1 msg_id is received before broadcasting, scrap the rebroadcast
 
- VER DEV MIM MIL SAR DAR PRT M_T LEN DATA
-|   |   |   |   |   |   |   |   |   |...
+
+# No gateway
+Send registration
+No response -> probably no gateway
+Address is kept 0
+Listen on address 255 for all your ports
+    //if port 0 and message id == last sent message id + 1 -> listen to message (probably a new gateway)
+Start normal operation (sending data to ports) with address 255 (broadcast)
+Wait for possible response, but none is expected
+
+### Gateway is added
+Send registration
+No response -> probably no gateway
+Set own address (to anything but 0 and 255)
+If any message is intercepted, answer on port 0 with combined message and id of n+1 (so normal answer)
+    ...COMBINED|7+x|ERR,1,NETWORK_CHANGE|CFG,2,DID,KEY|...
+
+# Gateway exists
+Send registration
+Get address (and key)
+listen on all own ports
+start normal operation
+register ports 
+    if ports are output, expect gateway to send you port solicitation when manully routed
+anounce already registered ports
+
+
 
 # Reserved fields:
     ADDRESS 0 - for devices with no address. Only gateways should answer to these
     ADDRESS 255 - broadcast. All devices should listen on this address, but only gateway should answer
     PORT: 0 - all predefined message types other than DATA
 
+if (addr == 0)
+    listen to all addresses
 
 
 ADDR 0 -> reserved for new nodes
