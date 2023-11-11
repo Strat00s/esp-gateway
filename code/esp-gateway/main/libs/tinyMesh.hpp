@@ -327,16 +327,18 @@ address + port -> define operations and data destination
 
 #define CALLBACKS 0
 
-#define TM_OK                      0
-#define TM_ERR_INVALID_VERSION     1
-#define TM_ERR_INVALID_MSG_TYPE    2
-#define TM_ERR_INVALID_MSG_ID      3
-#define TM_ERR_DATA_TOO_LONG       4
-#define TM_ERR_INVALID_PACKET_SIZE 5
-#define TM_ERR_NULL                6
-#define TM_ERR_INVALID_DEVICE_TYPE 7
-#define TM_ERR_INVALID_MSG_TYPE    8
-#define TM_ERR_PACKET_CHECK_FAILED 9
+#define TM_OK                   0b0000000000000000
+
+#define TM_ERR_NULL             0b0000000000000001
+#define TM_ERR_VERSION          0b0000000000000010
+#define TM_ERR_MSG_ID           0b0000000000000100
+#define TM_ERR_DEVICE_TYPE      0b0000000000001000
+#define TM_ERR_SOURCE_ADDR      0b0000000000010000
+#define TM_ERR_DATA_LEN         0b0000000000100000
+#define TM_ERR_MSG_TYPE         0b0000000001000000
+#define TM_ERR_MSG_TYPE_PORT    0b0000000010000000
+#define TM_ERR_MSG_TYPE_ADDRESS 0b0000000100000000
+#define TM_ERR_MSG_TYPE_LEN     0b0000001000000000
 
 //#define TM_MSG_REQUEST       
 //#define TM_MSG_RESEND        
@@ -443,7 +445,7 @@ private:
     uint8_t device_type     = 0;
     uint16_t timeout        = 2000;
 
-    flags_8b_t flags;
+    //flags_8b_t flags;
     
     uint16_t lcg(uint16_t seed);
 
@@ -483,31 +485,12 @@ public:
      * @param packet Packet poiner where to store header and data
      * @param destination Destination node address
      * @param message_type Message type
-     * @return 
-     */
-    uint16_t buildPacket(packet_t *packet, uint8_t destination, uint8_t message_type);
-    
-    /** @brief Build packet from specified data
-     * 
-     * @param packet Packet poiner where to store header and data
-     * @param destination Destination node address
-     * @param message_type Message type
-     * @param port Port to which to send data
-     * @return 
-     */
-    uint16_t buildPacket(packet_t *packet, uint8_t destination, uint8_t message_type, uint8_t port);
-    
-    /** @brief Build packet from specified data
-     * 
-     * @param packet Packet poiner where to store header and data
-     * @param destination Destination node address
-     * @param message_type Message type
      * @param port Port to which to send data
      * @param data Data which to send
      * @param length Length of data
      * @return 
      */
-    uint16_t buildPacket(packet_t *packet, uint8_t destination, uint8_t message_type, uint8_t port, uint8_t *data, uint8_t length);
+    uint16_t buildPacket(packet_t *packet, uint8_t destination, uint8_t message_type, uint8_t port = 0, uint8_t *data = nullptr, uint8_t length = 0);
     
     /** @brief Try and answer the packet and overwrite it as answer
      * 
@@ -532,19 +515,6 @@ public:
      * @return TM_OK on succes, TM_ERR_PACKET_CHECK_FAILED on error
      */
     uint16_t checkPacket(packet_t *packet);
-
-    /** @brief Read packet (raw data), validate and save header and data.
-     * Runs checkPacket();
-     * Sets flag data_truncated when raw data are shroted than advertised packet length
-     * 
-     * @param  
-     */
-    uint8_t readPacket(uint8_t *raw, uint8_t length, bool force = false);
-
-    /** @brief Generate apropriate answer to received packet if possible. Used when custom handling functions not implemented
-     * 
-     */
-    //uint8_t *answer(uint8_t *data, uint8_t length);
 
     void clearFlags();
 
