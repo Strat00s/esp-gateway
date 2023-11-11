@@ -1,10 +1,6 @@
 #pragma once
 #include <stdio.h>
 
-
-#define TM_VERSION 1
-
-
 // VER DEV MIM MIL SAR DAR PRT M_T LEN DATA
 /*
 # Packet structure
@@ -327,9 +323,21 @@ address + port -> define operations and data destination
 
 #define CALLBACKS 0
 
+
+
+#define TM_VERSION 1
+
+//PACKET SIZES
+#define TM_HEADER_LENGTH 9
+#define TM_DATA_LENGTH   256 - TM_HEADER_LENGTH
+
+//RETURN FLAGS
 #define TM_OK                   0b0000000000000000
 
 #define TM_ERR_NULL             0b0000000000000001
+#define TM_ERR_PACKET_LEN       0b0000010000000000
+#define TM_ERR_TRUNCATED        0b0001000000000000
+
 #define TM_ERR_VERSION          0b0000000000000010
 #define TM_ERR_MSG_ID           0b0000000000000100
 #define TM_ERR_DEVICE_TYPE      0b0000000000001000
@@ -339,9 +347,11 @@ address + port -> define operations and data destination
 #define TM_ERR_MSG_TYPE_PORT    0b0000000010000000
 #define TM_ERR_MSG_TYPE_ADDRESS 0b0000000100000000
 #define TM_ERR_MSG_TYPE_LEN     0b0000001000000000
+#define TM_ERR_DATA_NULL        0b0000100000000000
 
-//#define TM_MSG_REQUEST       
-//#define TM_MSG_RESEND        
+#define TM_ERR_CFG_ADDRESS      0b0001000000000000
+
+//MESSAGE TYPES
 #define TM_MSG_OK            0
 #define TM_MSG_ERR           1
 #define TM_MSG_PING          2  //ping device
@@ -355,6 +365,7 @@ address + port -> define operations and data destination
 #define TM_MSG_COMBINED      10 //data contain multiple messages in format |TYPE|LEN|DATA|TYPE...
 #define TM_MSG_CUSTOM        11 //send custom data (to some port)
 
+//PORT DATA TYPES
 #define TM_PORT_DATA_NONE   0
 #define TM_PORT_DATA_INT8   1
 #define TM_PORT_DATA_INT16  2
@@ -362,50 +373,40 @@ address + port -> define operations and data destination
 #define TM_PORT_DATA_STR    4
 #define TM_PORT_DATA_CUSTOM 5
 
+//PORT DIRECTIONS
 #define TM_PORT_IN      0b00000000;
 #define TM_PORT_OUT     0b01000000;
 #define TM_PORT_INOUT   0b10000000;
 
-
+//NODE TYPES
 #define TM_TYPE_GATEWAY 0
 #define TM_TYPE_NODE    1
 #define TM_TYPE_LP_NODE 2
 
-
-#define TM_HEADER_LENGTH 9
-#define TM_DATA_LENGTH   256 - TM_HEADER_LENGTH
-
-#define TM_VERSION_POS  0
-#define TM_DEVICE_TYPE  1
-#define TM_MSG_ID_POS   2
-#define TM_SRC_ADDR_POS 4
-#define TM_DST_ADDR_POS 5
-#define TM_PROTOCOL_POS 6
-#define TM_MSG_TYPE_POS 7
-#define TM_DATA_LEN_POS 8
+//ERROR CODES
+#define TM_EC_CFG_ADDRESS 1
+#define TM_
 
 
-#define DEFAULT_ADDRESS   0
-#define BROADCAST_ADDRESS 255
-#define DEFAULT_PORT      0
+#define TM_POS_VERSION  0
+#define TM_POS_DEV_TYPE 1
+#define TM_POS_MSG_ID_M 2
+#define TM_POS_MSG_ID_L 3
+#define TM_POS_SRC_ADDR 4
+#define TM_POS_DST_ADDR 5
+#define TM_POS_PORT     6
+#define TM_POS_MSG_TYPE 7
+#define TM_POS_DATA_LEN 8
+
+
+//DEFAULT CONFIG
+#define TM_DEFAULT_ADDRESS   0
+#define TM_BROADCAST_ADDRESS 255
+#define TM_DEFAULT_PORT      0
 
 #define PORT_COUNT      10
 #define SEND_QUEUE_SIZE 10
 
-
-typedef union {
-    uint32_t all = 0;
-    struct {
-        uint8_t wrong_version  :1;
-        uint8_t wrong_dev_type :1;
-        uint8_t wrong_msg_type :1;
-        uint8_t data_too_long  :1;
-        uint8_t data_truncated :1;
-        uint8_t none1          :1;
-        uint8_t none2          :1;
-        uint8_t none3          :1;
-    } single;
-} flags_32b_t;
 
 typedef union{
     struct {
@@ -491,13 +492,6 @@ public:
      * @return 
      */
     uint16_t buildPacket(packet_t *packet, uint8_t destination, uint8_t message_type, uint8_t port = 0, uint8_t *data = nullptr, uint8_t length = 0);
-    
-    /** @brief Try and answer the packet and overwrite it as answer
-     * 
-     * @param packet Input packet to be read and rewriten as output packet
-     * @return 
-     */
-    uint16_t buildAnswer(packet_t *packet);
 
     /** @brief 
      * 
@@ -506,8 +500,14 @@ public:
      * @param length Data length
      * @return 
      */
-    uint16_t readPacket(packet_t *packet, uint8_t *data, uint8_t length);
+    uint16_t readPacket(packet_t *packet, uint8_t *buffer, uint8_t length);
 
+    /** @brief Try and answer the packet and overwrite it as answer
+     * 
+     * @param packet Input packet (in correct format) to be read and rewriten as output packet
+     * @return 
+     */
+    uint16_t buildAnswerHeader(packet_t *packet);
 
     /** @brief Check if stored packet has valid header and header data.
      * Sets flags when field contain invalid values
@@ -515,9 +515,6 @@ public:
      * @return TM_OK on succes, TM_ERR_PACKET_CHECK_FAILED on error
      */
     uint16_t checkPacket(packet_t *packet);
-
-    void clearFlags();
-
 
 
     /*----(CALLBACKS REQUIRED)----*/
