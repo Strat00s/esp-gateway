@@ -538,7 +538,7 @@ void SX127X::errataFix(bool receive) {
 }
 
 
-uint8_t SX127X::transmit(uint8_t *data, uint8_t length) {
+uint8_t SX127X::transmit(uint8_t *data, uint8_t length, uint8_t soft) {
     setMode(SX127X_OP_MODE_STANDBY);
 
     //set IO mapping for dio0 to be end of transmission
@@ -563,11 +563,12 @@ uint8_t SX127X::transmit(uint8_t *data, uint8_t length) {
     //start transmission
     setMode(SX127X_OP_MODE_TX);
 
+    //if dio0 is not working properly, check the register instead of waiting for the pin to go high
+    if (soft)
+        while(!(readRegister(REG_IRQ_FLAGS) & 0b00001000));
     //wait for transmission to end
-    while(!this->pinRead(this->dio0));
-
-    //sometimes, just waiting for the gpio is not enough, so check the IRQ flags
-    //while(!(readRegister(REG_IRQ_FLAGS) & 0b00001000));
+    else
+        while(!this->pinRead(this->dio0));
 
     //go back to standby
     setMode(SX127X_OP_MODE_STANDBY);

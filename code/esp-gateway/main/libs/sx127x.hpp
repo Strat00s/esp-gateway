@@ -614,7 +614,7 @@ public:
      * @param length Length of data to be sent (max 256B)
      * @return IRQ flags
      */
-    uint8_t transmit(uint8_t *data, uint8_t length);
+    uint8_t transmit(uint8_t *data, uint8_t length, uint8_t soft = 0);
 
     //TODO finish
     /** @brief Blocking data receive. Requires `micros` callback.
