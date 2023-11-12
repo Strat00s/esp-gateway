@@ -1,3 +1,4 @@
+//TODO proper wifi handling
 //TODO Add LCD
 //TODO Fix SD
 //TODO Make subcribe and publish routines for mqtt
@@ -5,6 +6,7 @@
 //TODO 6. init nrf24              //lcd, sd, mqtt
 //TODO 7. init esp01              //lcd, sd, mqtt
 //TODO 8. init rf434              //lcd, sd, mqtt
+//TODO routes
 
 
 #include <stdio.h>
@@ -12,6 +14,8 @@
 #include <string.h>
 #include <string>
 #include <vector>
+#include <set>
+#include <map>
 #include <array>
 #include <queue>
 #include <deque>
@@ -39,6 +43,7 @@
 #include "libs/sx127x.hpp"
 #include "libs/simpleQueue.hpp"
 #include "libs/simpleContainer.hpp"
+#include "libs/tinyMesh.hpp"
 #include "wifi_cfg.h"
 
 
@@ -150,7 +155,7 @@
 
 
 /*----(Instances)----*/
-SX127X lora_434(CS1, RST1, DIO01);
+SX127X lora1_434(CS1, RST1, DIO01);
 SX127X lora_868(CS4, RST4, DIO04);
 
 spi_device_handle_t dev_handl;
@@ -171,6 +176,9 @@ SimpleContainer<node_entry_t> node_list;
 typedef struct {
     std::string name;               //cmd name
     std::vector<uint16_t> node_ids;  //node to which this command should be forwarded to
+    uint8_t src_addr;
+    uint8_t dest_addr;
+    uint8_t port;
 } rule_entry_t;
 SimpleContainer<rule_entry_t> rule_list;
 
@@ -233,7 +241,7 @@ volatile bool irq3 = false;
 volatile bool irq4 = false;
 
 
-//main callbacks
+//library callbacks
 void pinMode(uint8_t pin, uint8_t mode) {
     gpio_set_direction((gpio_num_t)pin, (gpio_mode_t)mode);
 }
@@ -521,10 +529,6 @@ void gpioInit() {
 
     ESP_LOGI(TAG, "All pins reset");
 
-    //TODO configure all pins
-    //gpio_config_t tmp = {
-    //    .
-    //}
 
     gpio_set_direction(STATUS_LED, GPIO_MODE_INPUT_OUTPUT);
 
@@ -665,7 +669,7 @@ void sntpInit() {
         .renew_servers_after_new_IP = false,
         .ip_event_to_renew = IP_EVENT_STA_GOT_IP,
         .index_of_first_server = 0,
-        .num_of_servers = (1),
+        .num_of_servers = 1,
         .servers = "cz.pool.ntp.org",   //TODO configurable
     };
     esp_netif_sntp_init(&config);
@@ -828,16 +832,249 @@ void mqttTask(void *args) {
 }
 
 
+void printBinary(uint32_t num, uint8_t len) {
+    for (int i = 1; i < len + 1; i++) {
+        printf("%ld", (num >> (len - i)) & 1);
+    }
+}
+
+void printPacket(packet_t *packet) {
+    printf("Version:             %d\n", packet->fields.version);
+    printf("Device type:         %d\n", packet->fields.device_type);
+    printf("Message id:          %d\n", (((uint16_t)packet->fields.msg_id_msb) << 8) | ((uint16_t)packet->fields.msg_id_lsb));
+    printf("Source address:      %d\n", packet->fields.source_addr);
+    printf("Destination address: %d\n", packet->fields.dest_addr);
+    printf("Message type:        %d\n", packet->fields.msg_type);
+    printf("Data length:         %d\n", packet->fields.data_length);
+    printf("Data: ");
+    for (int i = 0; i < packet->fields.data_length; i++) {
+        printBinary(packet->fields.data[i], 8);
+        printf(" ");
+    }
+    printf("\n");
+}
+
+uint8_t getLoraPayload(SX127X *lora, uint8_t *payload) {
+    uint8_t status = lora->checkPayloadIntegrity();
+    if (status) {
+        switch (status) {
+            case ERR_RX_TIMEOUT:   printf("ERR_RX_TIMEOUT\n");    break;
+            case ERR_CRC_MISMATCH: printf("ERR_CRC_MISSMATCH\n"); break;
+            default:               printf("UNKNOWN\n");           break;
+        }
+        lora->clearIrqFlags();
+        return 0;
+    }
+
+    lora1_434.readData(payload);
+    uint8_t payload_len = lora->getPayloadLength();
+    lora->clearIrqFlags();
+    printf("Received payload of size: %d\n", payload_len);
+    return payload_len;
+}
+
+
+
+typedef struct {
+    uint8_t src;
+    uint8_t dest;
+    uint8_t port;
+    uint8_t type;
+    uint8_t dest_interface;
+} route_t;
+
+std::vector<route_t> route_table;
+
+
+uint8_t lora1_434SendPacket(packet_t *packet) {
+    auto ret = lora1_434.transmit(packet->raw, packet->fields.data_length + TM_HEADER_LENGTH);
+    irq1 = false;
+    lora1_434.receiveContinuous();
+
+    return ret;
+}
+
+uint8_t forwardPacket(packet_t *packet) {
+    static const char* TAG = "forwardPacket";
+
+    //check routing table
+    //if no route is found, forward on everything
+
+    ESP_LOGI(TAG, "Forwarding packet");
+    printPacket(packet);
+
+    //currently forward only on lora1_443
+    return lora1_434SendPacket(packet);
+}
+
+
+//address-port-message_id
+//save only when response is expected
+//on response (ok, err, config) remove device-port-message_id combination
+//delete after some time //TODO create task that goes through them and removes them when old enough
+
+typedef struct {
+    uint8_t address;
+    uint8_t port;
+    uint16_t msg_id;
+    uint8_t active;
+    uint32_t stale_time;    //time (micros timestamp) after which task should be removed
+} flow_t;
+
+std::deque<flow_t> flow_list;
+
+uint16_t last_message_id;
+
+uint8_t handlePacket(packet_t *packet) {
+    static const char* TAG = "handlePacket";
+
+    if (tm.checkPacket(packet))
+        return 1;
+
+    flow_t new_flow = {
+        .address    = packet->fields.source_addr,
+        .port       = packet->fields.port,
+        .msg_id     = (((uint16_t)packet->fields.msg_id_msb) << 8) | ((uint16_t)packet->fields.msg_id_msb),
+        .active     = 1,
+        .stale_time = micros() + 5 * 1000 * 1000 //5 second before stale
+    };
+
+    //check and add flow id (address, port and message id to chekc flow and remove possible loops)
+    bool existing_flow = false;
+    for (size_t i = 0; i < flow_list.size(); i++) {
+        //flow already exists -> dont do anything
+        if (flow_list[i].address == new_flow.address &&
+            flow_list[i].port    == new_flow.port &&
+            flow_list[i].msg_id  == new_flow.msg_id) {
+            
+            ESP_LOGI(TAG, "Duplicit packet");
+            printPacket(packet);
+
+            //TODO mqtt log
+
+            return 0;
+        }
+
+        //response to already stored message -> flow is no longer active
+        //TODO only supports 2 packet flows
+        if (flow_list[i].address    == new_flow.address &&
+            flow_list[i].port       == new_flow.port &&
+            flow_list[i].msg_id + 1 == new_flow.msg_id) {
+            
+            ESP_LOGI(TAG, "Flow finished");
+            printf("%d %d %d\n", flow_list[i].address, flow_list[i].port, flow_list[i].msg_id);
+
+            flow_list[i].active--;
+            existing_flow = true;
+            break;
+        }
+    }
+
+    //add new flow if it does not exist
+    if (!existing_flow) {
+        ESP_LOGI(TAG, "Flow added");
+        printf("%d %d %d\n", new_flow.address, new_flow.port, new_flow.msg_id);
+        flow_list.push_back(new_flow);
+    }
+
+    //forward the packet when it is not ours
+    if (packet->fields.dest_addr != tm.getAddress()) {
+        forwardPacket(packet);
+        //TODO log
+    }
+    else {
+        //response
+        tm.buildAnswerHeader(packet);
+    }
+
+
+
+    //log it
+    switch (packet->fields.msg_type) {
+    case TM_MSG_OK:
+        //check to which sent message it belongs and do apropriate action (only pins requires such action) -> store sent messages and remove them on ok, err, after some time
+        //log to mqtt
+        break;
+    case TM_MSG_ERR:
+        //find to which message it was
+        //log to mqtt
+        break;
+    case TM_MSG_PING:
+        //response with ok
+        
+        //log to mqtt
+        break;
+    case TM_MSG_REGISTER:
+        //check address
+        //response with device config
+        //log to mqtt
+        break;
+    case TM_MSG_DEVICE_CONFIG:
+        //check address
+        //response with ok
+        //log to mqtt
+        break;
+    case TM_MSG_PORT_ADVERT:
+        //check address
+        //response with ok
+        //log to mqtt
+        break;
+    case TM_MSG_ROUTE_SOLICIT:
+        //check address
+        //response with ok
+        //log to mqtt
+        break;
+    case TM_MSG_ROUTE_ANOUNC:
+        //check address
+        //response with ok
+        //log to mqtt
+        break;
+    case TM_MSG_RESET:
+        //check address
+        //response with ok
+        //log to mqtt
+        break;
+    case TM_MSG_STATUS:
+        //check address
+        //response with ok
+        //log to mqtt
+        break;
+    case TM_MSG_COMBINED:
+        //check address
+        //response with ok
+        //log to mqtt
+        break;
+    case TM_MSG_CUSTOM:
+        //check address
+        //response with ok
+        //log to mqtt
+        break;
+
+    default: break;
+    }
+}
+
+
+uint32_t ping(uint8_t destination) {
+    packet_t packet;
+    tm.buildPacket(&packet, destination, TM_MSG_PING);
+    lora1_434SendPacket(&packet);
+}
+
+
+TinyMesh tm(TM_TYPE_GATEWAY);
 
 extern "C" void app_main() {
     static const char* TAG = "main";
-    node_entry_t this_node = {
-        .name = MQTT_NAME,
-        .interface = INTERFACE_WIFI,
-        .schema = {0},
-    };
-    this_node.schema[0] = 1;
-    node_list.addItem(MQTT_ID, this_node);
+
+
+    //node_entry_t this_node = {
+    //    .name = MQTT_NAME,
+    //    .interface = INTERFACE_WIFI,
+    //    .schema = {0},
+    //};
+    //this_node.schema[0] = 1;
+    //node_list.addItem(MQTT_ID, this_node);
 
     //configure all gpio pins
     gpioInit();
@@ -845,8 +1082,9 @@ extern "C" void app_main() {
     //create default led task
     xTaskCreate(ledStatusTask, "ledStatusTask", 2048, nullptr, 99, &led_task_handle);
     xTaskNotify(led_task_handle, PTRN_ID_INIT, eSetValueWithOverwrite);
-
+    
     delay(2000);
+
 
     //initialize nvs partition
     auto ret = nvs_flash_init();
@@ -873,28 +1111,28 @@ extern "C" void app_main() {
     //TODO sd task
 
     //configure and connect to wifi
-    wifiInit();
+    //wifiInit();
 
     //initialize SNTP and sync with NTP server
-    sntpInit();
-    xTaskCreate(sntpTask, "SNTPTask", 2048, nullptr, 1, &sntp_task_handle);
+    //sntpInit();
+    //xTaskCreate(sntpTask, "SNTPTask", 2048, nullptr, 1, &sntp_task_handle);
 
 
     //configure and subscribe to mqtt server
-    mqttInit();
-    xTaskCreate(mqttTask, "MQTTTask", 4096, nullptr, 1, &mqtt_task_handle);
+    //mqttInit();
+    //xTaskCreate(mqttTask, "MQTTTask", 4096, nullptr, 1, &mqtt_task_handle);
 
 
     //configure and initialize spi
     spiInit();
 
     //configure installed interface modules
-    configureLora(&lora_434, 434.0, 0x12, 8, LORA_BANDWIDTH_125kHz, LORA_SPREADING_FACTOR_9, LORA_CODING_RATE_4_7);
+    configureLora(&lora1_434, 434.0, 0x12, 8, LORA_BANDWIDTH_125kHz, LORA_SPREADING_FACTOR_9, LORA_CODING_RATE_4_7);
     configureLora(&lora_868, 868.0, 0x12, 8, LORA_BANDWIDTH_125kHz, LORA_SPREADING_FACTOR_9, LORA_CODING_RATE_4_7);
 
 
     uint8_t freq[3] = {0};
-    lora_434.readRegistersBurst(REG_FRF_MSB, freq, 3);
+    lora1_434.readRegistersBurst(REG_FRF_MSB, freq, 3);
     ESP_LOGI(TAG, "434 freq: 0x%02X%02X%02X", freq[0], freq[1], freq[2]);
     memset(freq, 0, 3);
     lora_868.readRegistersBurst(REG_FRF_MSB, freq, 3);
@@ -902,35 +1140,103 @@ extern "C" void app_main() {
 
 
     //init done -> change pattern to idle
+    //xTaskNotify(led_task_handle, PTRN_ID_IDLE, eSetValueWithOverwrite);
+
+
+    //lora_868.setMode(SX127X_OP_MODE_SLEEP);
+    //lora1_434.receiveContinuous();
+
+    //uint32_t start = micros();
+    //uint32_t bytes_total = 0;
+
+
+    //register to tinymesh
+    packet_t packet;
+    uint8_t payload[256];
+
+    ret = tm.buildPacket(&packet, 255, TM_MSG_REGISTER);
+    printf("ret: ");
+    printBinary(ret, 16);
+    printf("\n");
+
+    printf("Register to TM\n");
+    lora1_434.transmit(packet.raw, packet.fields.data_length + TM_HEADER_LENGTH);
+    irq1 = false;
+
+    lora1_434.receiveContinuous();
+    bool timeout = false;
+    uint32_t timer = micros();
+    
+    while (!irq1) {
+        if (micros() - timer > 1000 * 1000) {
+            timeout = true;
+            break;
+        }
+    }
+    printf("%ld\n", timer);
+
+    if (timeout) {
+        printf("TM Register timeout\n");
+        //set own address to something since we are the only gateway
+        tm.setAddress(1);
+        printf("I am the only gateway right now");
+    }
+    else {
+        printf("TM Got answer\n");
+        
+        uint8_t payload_len = getLoraPayload(&lora1_434, payload);
+        irq1 = false;
+
+        uint16_t ret = tm.readPacket(&packet, payload, payload_len);
+        printf("ret: ");
+        printBinary(ret, 16);
+        printf("\n");
+        printPacket(&packet);
+
+        if (ret)
+            printf("Broken answer\n");
+
+        if (packet.fields.msg_type == TM_MSG_ERR) {
+            printf("TM Err: ");
+            printBinary(packet.fields.data[0], 8);
+            printf("\n");
+        }
+        else if (packet.fields.msg_type == TM_MSG_DEVICE_CONFIG) {
+            printf("TM config\n");
+            tm.setAddress(packet.fields.data[0]);
+            ret = tm.buildAnswerHeader(&packet);
+            printf("ret: ");
+            printBinary(ret, 16);
+            printf("\n");
+            lora1_434.transmit(packet.raw, packet.fields.data_length + TM_HEADER_LENGTH);
+            lora1_434.receiveContinuous();
+        }
+        else {
+            printf("TM Invalid answer\n");
+        }
+    }
+
     xTaskNotify(led_task_handle, PTRN_ID_IDLE, eSetValueWithOverwrite);
 
 
-    lora_868.setMode(SX127X_OP_MODE_SLEEP);
-    lora_434.receiveContinuous();
 
-    //uint32_t start = micros();
-    uint32_t bytes_total = 0;
-
-
+    timer = 0;
+    //TODO
     while(true) {
+        if (micros() - timer > 1000 * 1000) {
+            timer = micros();
+            printf("Hello world\n");
+        }
+
         if (irq1) {
             irq1 = false;
-            uint8_t status = lora_434.checkPayloadIntegrity();
-            if (status) {
-                switch (status) {
-                    case ERR_RX_TIMEOUT:   printf("ERR_RX_TIMEOUT\n"); break;
-                    case ERR_CRC_MISMATCH: printf("ERR_CRC_MISSMATCH\n"); break;
-                    default: printf("UNKNOWN\n"); break;
-                }
-                lora_434.clearIrqFlags();
-                continue;
-            }
             uint8_t payload[256] = {0};
-            lora_434.readData(payload);
-            bytes_total += lora_434.getPayloadLength();
-            lora_434.clearIrqFlags();
-            printf("Received payload: %s\n", payload);
-            printf("Total bytes received: %lu\n", bytes_total);
+            uint8_t payload_len = getLoraPayload(&lora1_434, payload);
+            if (payload_len == 0)
+                continue;
+
+            tm.readPacket(&packet, payload, payload_len);
+            printPacket(&packet);
         }
         if (irq2) {
             irq2 = false;

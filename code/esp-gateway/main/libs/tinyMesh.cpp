@@ -1,62 +1,62 @@
 #include "tinyMesh.hpp"
 #include <cstring>
 
-tinyMesh::tinyMesh() {
+TinyMesh::TinyMesh() {
 
 }
 
-tinyMesh::tinyMesh(uint8_t device_type) {
+TinyMesh::TinyMesh(uint8_t device_type) {
     setDeviceType(device_type);
 }
 
-tinyMesh::tinyMesh(uint8_t address, uint8_t device_type) : tinyMesh(device_type) {
+TinyMesh::TinyMesh(uint8_t address, uint8_t device_type) : TinyMesh(device_type) {
     setAddress(address);
 }
 
-tinyMesh::tinyMesh(uint8_t version, uint8_t address, uint8_t device_type) : tinyMesh(address, device_type) {
+TinyMesh::TinyMesh(uint8_t version, uint8_t address, uint8_t device_type) : TinyMesh(address, device_type) {
     setVersion(version);
 }
 
-tinyMesh::~tinyMesh() {
+TinyMesh::~TinyMesh() {
 
 }
 
 
-void tinyMesh::setVersion(uint8_t version) {
+void TinyMesh::setVersion(uint8_t version) {
     if (version > TM_VERSION)
         this->version = TM_VERSION;
     else
         this->version = version;
 }
 
-void tinyMesh::setAddress(uint8_t address) {
+void TinyMesh::setAddress(uint8_t address) {
     if (address == 255)
         this->address = 0;
     else
         this->address = address;
 }
 
-void tinyMesh::setDeviceType(uint8_t device_type) {
+void TinyMesh::setDeviceType(uint8_t device_type) {
     if (device_type != TM_TYPE_GATEWAY && device_type != TM_TYPE_NODE && device_type != TM_TYPE_LP_NODE)
         this->device_type = TM_TYPE_NODE;
     else
         this->device_type = device_type;
 }
     
-uint8_t tinyMesh::getVersion() {
+uint8_t TinyMesh::getVersion() {
     return this->version;
 }
 
-uint8_t tinyMesh::getAddress() {
+uint8_t TinyMesh::getAddress() {
     return this->address;
 }
 
-uint8_t tinyMesh::getDeviceType() {
+uint8_t TinyMesh::getDeviceType() {
     return this->address;
 }
 
 
-uint16_t tinyMesh::buildPacket(packet_t *packet, uint8_t destination, uint8_t message_type, uint8_t port, uint8_t *buffer, uint8_t length) {
+uint16_t TinyMesh::buildPacket(packet_t *packet, uint8_t destination, uint8_t message_type, uint8_t port, uint8_t *buffer, uint8_t length) {
     uint16_t ret = TM_OK;
     
     if (packet == nullptr)
@@ -93,7 +93,7 @@ uint16_t tinyMesh::buildPacket(packet_t *packet, uint8_t destination, uint8_t me
     return ret;
 }
 
-uint16_t tinyMesh::readPacket(packet_t *packet, uint8_t *buffer, uint8_t length) {
+uint16_t TinyMesh::readPacket(packet_t *packet, uint8_t *buffer, uint8_t length) {
     uint16_t ret = TM_OK;
 
     if (packet == nullptr || buffer == nullptr)
@@ -133,7 +133,7 @@ uint16_t tinyMesh::readPacket(packet_t *packet, uint8_t *buffer, uint8_t length)
     return ret;
 }
 
-uint16_t tinyMesh::buildAnswerHeader(packet_t *packet) {
+uint16_t TinyMesh::buildAnswerHeader(packet_t *packet) {
     uint16_t ret = TM_OK;
 
     packet->fields.version = TM_VERSION;
@@ -142,6 +142,8 @@ uint16_t tinyMesh::buildAnswerHeader(packet_t *packet) {
     uint16_t msg_id = ((uint16_t)(packet->fields.msg_id_msb) << 8 | (uint16_t)(packet->fields.msg_id_lsb)) + 1;
     packet->fields.msg_id_msb = (uint8_t)(msg_id >> 8);
     packet->fields.msg_id_lsb = (uint8_t)msg_id;
+
+    uint8_t new_source_address = this->address;
 
     packet->fields.port = 0;
     packet->fields.data_length = 0;
@@ -160,7 +162,7 @@ uint16_t tinyMesh::buildAnswerHeader(packet_t *packet) {
             packet->fields.data[0]     = TM_EC_CFG_ADDRESS;
             break;
         }
-        this->address = packet->fields.data[0];
+        new_source_address = packet->fields.data[0];
         [[fallthrough]]
     case TM_MSG_PING:
     case TM_MSG_PORT_ADVERT:
@@ -174,14 +176,14 @@ uint16_t tinyMesh::buildAnswerHeader(packet_t *packet) {
     }
 
     packet->fields.dest_addr   = packet->fields.source_addr;
-    packet->fields.source_addr = this->address;
+    packet->fields.source_addr = new_source_address;
 
     return ret;
 }
 
 
 //TODO test
-uint16_t tinyMesh::checkPacket(packet_t *packet) {
+uint16_t TinyMesh::checkPacket(packet_t *packet) {
     uint16_t ret = TM_OK;
 
     //unsuported version

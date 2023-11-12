@@ -178,6 +178,8 @@ If node has adrress 0, it must listen on address 255
 Any message not using port 0, gateways must rebroadcast
 If message with n+1 msg_id is received before broadcasting, scrap the rebroadcast
 
+Everyone must rebroadcast when address does not match
+
 
 # No gateway
 Send registration
@@ -438,7 +440,7 @@ typedef struct {
 } port_cfg_t;
 
 
-class tinyMesh {
+class TinyMesh {
 private:
     uint8_t version         = TM_VERSION;
     uint8_t address         = 0;
@@ -462,11 +464,11 @@ private:
 #endif
 
 public:
-    tinyMesh();
-    tinyMesh(uint8_t device_type);
-    tinyMesh(uint8_t address, uint8_t device_type);
-    tinyMesh(uint8_t version, uint8_t address, uint8_t device_type);
-    ~tinyMesh();
+    TinyMesh();
+    TinyMesh(uint8_t device_type);
+    TinyMesh(uint8_t address, uint8_t device_type);
+    TinyMesh(uint8_t version, uint8_t address, uint8_t device_type);
+    ~TinyMesh();
 
 
     void setVersion(uint8_t version);
