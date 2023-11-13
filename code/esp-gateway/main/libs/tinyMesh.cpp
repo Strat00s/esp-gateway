@@ -258,6 +258,10 @@ uint16_t TinyMesh::checkPacket(packet_t *packet) {
     return ret;
 }
 
+uint16_t getMessageId(packet_t packet) {
+    return (((uint16_t)packet.fields.msg_id_msb) << 8) | ((uint16_t)packet.fields.msg_id_lsb);
+}
+
 
 uint16_t lcg(uint16_t seed) {
     return 42;

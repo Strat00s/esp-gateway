@@ -7,6 +7,7 @@
 //TODO 7. init esp01              //lcd, sd, mqtt
 //TODO 8. init rf434              //lcd, sd, mqtt
 //TODO routes
+//TODO access to SPI must be thread safe
 
 
 #include <stdio.h>
@@ -138,14 +139,15 @@
 
 
 //interfaces
-#define INTERFACE_LORA_131M 0
-#define INTERFACE_LORA_434M 1
-#define INTERFACE_LORA_868M 2
-#define INTERFACE_LORA_2_4G 3
-#define INTERFACE_ESPNOW    4
-#define INTERFACE_NRF24     5
-#define INTERFACE_RF43      6
-#define INTERFACE_WIFI      7
+#define INTERFACE_NONE      0
+#define INTERFACE_LORA_131M 1
+#define INTERFACE_LORA_434M 2
+#define INTERFACE_LORA_868M 3
+#define INTERFACE_LORA_2_4G 4
+#define INTERFACE_ESP_NOW   5
+#define INTERFACE_NRF24     6
+#define INTERFACE_RF_433    7
+#define INTERFACE_MQTT      8
 
 
 //blink pattern ids
@@ -832,23 +834,24 @@ void mqttTask(void *args) {
 }
 
 
+
 void printBinary(uint32_t num, uint8_t len) {
     for (int i = 1; i < len + 1; i++) {
         printf("%ld", (num >> (len - i)) & 1);
     }
 }
 
-void printPacket(packet_t *packet) {
-    printf("Version:             %d\n", packet->fields.version);
-    printf("Device type:         %d\n", packet->fields.device_type);
-    printf("Message id:          %d\n", (((uint16_t)packet->fields.msg_id_msb) << 8) | ((uint16_t)packet->fields.msg_id_lsb));
-    printf("Source address:      %d\n", packet->fields.source_addr);
-    printf("Destination address: %d\n", packet->fields.dest_addr);
-    printf("Message type:        %d\n", packet->fields.msg_type);
-    printf("Data length:         %d\n", packet->fields.data_length);
+void printPacket(packet_t packet) {
+    printf("Version:             %d\n", packet.fields.version);
+    printf("Device type:         %d\n", packet.fields.device_type);
+    printf("Message id:          %d\n", (((uint16_t)packet.fields.msg_id_msb) << 8) | ((uint16_t)packet.fields.msg_id_lsb));
+    printf("Source address:      %d\n", packet.fields.source_addr);
+    printf("Destination address: %d\n", packet.fields.dest_addr);
+    printf("Message type:        %d\n", packet.fields.msg_type);
+    printf("Data length:         %d\n", packet.fields.data_length);
     printf("Data: ");
-    for (int i = 0; i < packet->fields.data_length; i++) {
-        printBinary(packet->fields.data[i], 8);
+    for (int i = 0; i < packet.fields.data_length; i++) {
+        printBinary(packet.fields.data[i], 8);
         printf(" ");
     }
     printf("\n");
@@ -873,8 +876,6 @@ uint8_t getLoraPayload(SX127X *lora, uint8_t *payload) {
     return payload_len;
 }
 
-
-
 typedef struct {
     uint8_t src;
     uint8_t dest;
@@ -894,6 +895,11 @@ uint8_t lora1_434SendPacket(packet_t *packet) {
     return ret;
 }
 
+typedef struct {
+    packet_t packet;
+    uint8_t interface;
+} sendRequest_t;
+
 uint8_t forwardPacket(packet_t *packet) {
     static const char* TAG = "forwardPacket";
 
@@ -901,12 +907,66 @@ uint8_t forwardPacket(packet_t *packet) {
     //if no route is found, forward on everything
 
     ESP_LOGI(TAG, "Forwarding packet");
-    printPacket(packet);
+    printPacket(*packet);
 
     //currently forward only on lora1_443
     return lora1_434SendPacket(packet);
 }
 
+
+typedef struct {
+    uint8_t src_addr;
+    uint8_t dst_addr;
+    uint8_t interface;  //of destination
+    uint8_t port;
+    uint8_t type;
+} route_entry_t;
+
+std::deque<route_entry_t> routing_table;
+
+
+void sendPacketOnInterface(packet_t packet, uint8_t interface) {
+    static const char* TAG = "ON INTERFACE";
+
+    switch (interface) {
+    case INTERFACE_LORA_131M: ESP_LOGW(TAG, "NOT IMPLEMENTED YET\n"); break;
+    case INTERFACE_LORA_434M: 
+        //TODO disable interrupt
+        //TODO send
+        //TODO enable interrupt
+        //TODO start listening again
+        break;
+    case INTERFACE_LORA_868M: ESP_LOGW(TAG, "NOT IMPLEMENTED YET\n"); break;
+    case INTERFACE_LORA_2_4G: ESP_LOGW(TAG, "NOT IMPLEMENTED YET\n"); break;
+    case INTERFACE_ESP_NOW:   ESP_LOGW(TAG, "NOT IMPLEMENTED YET\n"); break;
+    case INTERFACE_NRF24:     ESP_LOGW(TAG, "NOT IMPLEMENTED YET\n"); break;
+    case INTERFACE_RF_433:    ESP_LOGW(TAG, "NOT IMPLEMENTED YET\n"); break;
+    case INTERFACE_MQTT:      ESP_LOGW(TAG, "NOT IMPLEMENTED YET\n"); break;
+    default: break;
+    }
+}
+
+std::map<uint8_t, std::vector<uint8_t>> interface_map;
+
+void handleOutgoingPacket(packet_t packet, QueueHandle_t queue = defaultResponseQueue) {
+    //TODO check routing
+        //TODO send packet to correct interface
+        //TODO send packet to all if no route found
+    
+    if (interface_map.contains(packet.fields.dest_addr)) {
+
+    }
+
+
+    //TODO check that transmission was successful
+    //save transaction
+    transaction_t transcation = {
+        .packet = packet,
+        .time_to_stale = micros() + 2 * 1000 * 1000,
+        .request_queue = queue
+    };
+    transactions.push_back(transcation);
+}
 
 //address-port-message_id
 //save only when response is expected
@@ -914,151 +974,222 @@ uint8_t forwardPacket(packet_t *packet) {
 //delete after some time //TODO create task that goes through them and removes them when old enough
 
 typedef struct {
-    uint8_t address;
-    uint8_t port;
-    uint16_t msg_id;
-    uint8_t active;
-    uint32_t stale_time;    //time (micros timestamp) after which task should be removed
-} flow_t;
+    packet_t packet;
+    uint32_t time_to_stale;
+    QueueHandle_t request_queue;
+} transaction_t;
 
-std::deque<flow_t> flow_list;
+std::deque<transaction_t> transactions; //TODO transaction timout handler
+std::deque<uint64_t> forward_list;  //time_to_stale | source_addr | port | msg_id   //TODO forward list timeout handler
 
-uint16_t last_message_id;
 
-uint8_t handlePacket(packet_t *packet) {
-    static const char* TAG = "handlePacket";
+/** @brief Ping task created when user request ping of some device over mqtt
+ * 
+ * 
+ * @param args destination address
+ */
+void pingTask(void *args) {
+    static const char* TAG = "PING TASK";
 
-    if (tm.checkPacket(packet))
+    QueueHandle_t pingQueue = xQueueCreate(1, sizeof(packet_t));
+    packet_t packet;
+
+    //build packet
+    auto ret = tm.buildPacket(&packet, *(uint8_t *)args, TM_MSG_PING);
+    if (ret) {
+        ESP_LOGI(TAG, "Failed to build ping packet\n");
+        vTaskDelete(NULL);
+    }
+
+    //send packet
+    handleOutgoingPacket(packet, pingQueue);
+
+    //start timer
+    auto timer = micros();
+    
+    //wait for response
+    auto q_ret = xQueueReceive(defaultResponseQueue, &packet, pdMS_TO_TICKS(2000));
+    
+    //timeout
+    if (q_ret == pdFALSE) {
+        ESP_LOGW(TAG, "ping timeout\n");
+        vTaskDelete(NULL);
+    }
+
+    timer = micros() - timer;
+    ESP_LOGI(TAG, "ping time: %ldus\n", timer);
+    printPacket(packet);
+
+    //TODO log data to mqtt
+
+    vTaskDelete(NULL);
+}
+
+
+QueueHandle_t defaultResponseQueue;
+void defaultResponseTask(void *args) {
+    static const char* TAG = "DEFAULT RESPONSE";
+    
+    defaultResponseQueue = xQueueCreate(2, sizeof(packet_t));
+    packet_t packet;
+    while (true) {
+        xQueueReceive(defaultResponseQueue, &packet, portMAX_DELAY);
+        ESP_LOGI(TAG, "Got response:\n");
+        printPacket(packet);
+        //TODO log to mqtt
+    }
+}
+
+
+uint8_t handleIncomingPacket(packet_t packet) {
+    static const char* TAG = "PacketIn";
+
+    if (tm.checkPacket(&packet))
         return 1;
 
-    flow_t new_flow = {
-        .address    = packet->fields.source_addr,
-        .port       = packet->fields.port,
-        .msg_id     = (((uint16_t)packet->fields.msg_id_msb) << 8) | ((uint16_t)packet->fields.msg_id_msb),
-        .active     = 1,
-        .stale_time = micros() + 5 * 1000 * 1000 //5 second before stale
-    };
+    uint32_t new_packet_id = (uint32_t)packet.fields.source_addr << 24 | (uint32_t)packet.fields.port << 16 |
+                             (uint16_t)packet.fields.msg_id_msb << 8 | packet.fields.msg_id_msb;
 
-    //check and add flow id (address, port and message id to chekc flow and remove possible loops)
-    bool existing_flow = false;
-    for (size_t i = 0; i < flow_list.size(); i++) {
+
+    //check if packet was already forwarded
+    for (size_t i = 0; i < forward_list.size(); i++) {
         //flow already exists -> dont do anything
-        if (flow_list[i].address == new_flow.address &&
-            flow_list[i].port    == new_flow.port &&
-            flow_list[i].msg_id  == new_flow.msg_id) {
-            
-            ESP_LOGI(TAG, "Duplicit packet");
+        if ((uint32_t)forward_list[i] == new_packet_id) {
+            ESP_LOGI(TAG, "Packet already forwarded\n");
             printPacket(packet);
-
             //TODO mqtt log
-
             return 0;
         }
-
-        //response to already stored message -> flow is no longer active
-        //TODO only supports 2 packet flows
-        if (flow_list[i].address    == new_flow.address &&
-            flow_list[i].port       == new_flow.port &&
-            flow_list[i].msg_id + 1 == new_flow.msg_id) {
-            
-            ESP_LOGI(TAG, "Flow finished");
-            printf("%d %d %d\n", flow_list[i].address, flow_list[i].port, flow_list[i].msg_id);
-
-            flow_list[i].active--;
-            existing_flow = true;
-            break;
-        }
     }
 
-    //add new flow if it does not exist
-    if (!existing_flow) {
-        ESP_LOGI(TAG, "Flow added");
-        printf("%d %d %d\n", new_flow.address, new_flow.port, new_flow.msg_id);
-        flow_list.push_back(new_flow);
+    //save new packet id
+    forward_list.push_back((uint64_t)micros() << 32 | new_packet_id);
+
+    //packet is to be forwarded
+    if (packet.fields.dest_addr != tm.getAddress()) {
+        //TODO send packet
+        //TODO mqtt log
+        return 0;
     }
 
-    //forward the packet when it is not ours
-    if (packet->fields.dest_addr != tm.getAddress()) {
-        forwardPacket(packet);
-        //TODO log
-    }
-    else {
-        //response
-        tm.buildAnswerHeader(packet);
-    }
-
-
-
-    //log it
-    switch (packet->fields.msg_type) {
+    //packet is for us
+    switch (packet.fields.msg_type) {
+    //packet is a response to one of our previous packets
     case TM_MSG_OK:
-        //check to which sent message it belongs and do apropriate action (only pins requires such action) -> store sent messages and remove them on ok, err, after some time
-        //log to mqtt
+        for (size_t i = 0; i < transactions.size(); i++) {
+            //found original packet
+            if (transactions[i].packet.fields.dest_addr == packet.fields.source_addr && tm.getMessageId(transactions[i].packet) + 1 == tm.getMessageId(packet)) {
+                if (packet.fields.msg_type == TM_MSG_OK) {
+                    //send packet to the queue of the requesting function/task to process it
+                    xQueueSendToBack(transactions[i].request_queue, &packet, 0);
+                }
+                transactions.erase(transactions.begin() + i);   //transaction is done
+                break;
+            }
+        }
+        ESP_LOGW(TAG, "Packet is OK but is not a response to anything\n");
+        //TODO log to mqtt
         break;
+    //packet is a response to one of our previous packets
     case TM_MSG_ERR:
-        //find to which message it was
-        //log to mqtt
+        for (size_t i = 0; i < transactions.size(); i++) {
+            //found original packet
+            if (transactions[i].packet.fields.dest_addr == packet.fields.source_addr && tm.getMessageId(transactions[i].packet) + 1 == tm.getMessageId(packet)) {
+                if (packet.fields.msg_type == TM_MSG_OK) {
+                    //send packet to the queue of the requesting function/task to process it
+                    xQueueSendToBack(transactions[i].request_queue, &packet, 0);
+                }
+                transactions.erase(transactions.begin() + i);   //transaction is done
+                break;
+            }
+        }
+        ESP_LOGW(TAG, "Packet is ERR but is not a response to anything\n");
+        //TODO log to mqtt
         break;
     case TM_MSG_PING:
-        //response with ok
-        
-        //log to mqtt
+        //TODO create response packet
+        //TODO add it to send queue
+        //TODO log to mqtt
         break;
     case TM_MSG_REGISTER:
-        //check address
-        //response with device config
+        //TODO create response config packet
+        //add it to send queue
+        //add transaction, since we are waiting for response
+            //add default response handler queue
         //log to mqtt
         break;
     case TM_MSG_DEVICE_CONFIG:
-        //check address
-        //response with ok
-        //log to mqtt
+        //DONT handle
+        //TODO create error response and send it
         break;
     case TM_MSG_PORT_ADVERT:
-        //check address
-        //response with ok
-        //log to mqtt
+        //TODO build partial route
+        //TODO add it to mqtt config of the route
+        //TODO response
+        //TODO log to mqtt
         break;
     case TM_MSG_ROUTE_SOLICIT:
-        //check address
-        //response with ok
-        //log to mqtt
+        //DONT handle
+        //TODO create error response and send it
         break;
     case TM_MSG_ROUTE_ANOUNC:
-        //check address
-        //response with ok
-        //log to mqtt
+        //TODO store route
+        //TODO save route to mqtt
+        //TODO response
+        //TODO log to mqtt
         break;
     case TM_MSG_RESET:
-        //check address
-        //response with ok
-        //log to mqtt
+        //DONT handle
+        //TODO create error response and send it
         break;
     case TM_MSG_STATUS:
-        //check address
-        //response with ok
-        //log to mqtt
+        //TODO add status to the device in mqtt
+        //TODO response
+        //TODO log to mqtt
         break;
     case TM_MSG_COMBINED:
-        //check address
-        //response with ok
-        //log to mqtt
+        //TODO parse it
+        //TODO response
+        //TODO log to mqtt
         break;
     case TM_MSG_CUSTOM:
-        //check address
-        //response with ok
-        //log to mqtt
+        //TODO handle (if we have an custom services)
+        //TODO response
+        //TODO log to mqtt
         break;
 
     default: break;
     }
 }
 
+/* transmit task
+tinyMeshHandler
 
+has list of interfaces
+has routes and has interface address pairs
+    if not, send to all and save route
+must responde to all TM messages
+callback for custom message and any other message that requires handling (register, err)
+*/
+
+
+
+//called from mqtt
 uint32_t ping(uint8_t destination) {
+    //request transmission of a packet from transmit task
+    //wait for data from transmit task (semaphore, queue, anything that blocks current task)
+        //transmit task has to store our request, wait for reception, compare our request with new reception and give us the packet
+    //calculate time since ping
     packet_t packet;
-    tm.buildPacket(&packet, destination, TM_MSG_PING);
-    lora1_434SendPacket(&packet);
+    uint32_t timer = micros();
+    //tm.buildPacket(&packet, destination, TM_MSG_PING);
+    //lora1_434SendPacket(&packet);
+    timer = micros() - timer;
+
+    if (packet.fields.msg_type == TM_MSG_OK)
+        return timer;
+
+    return 0;
 }
 
 
@@ -1111,16 +1242,16 @@ extern "C" void app_main() {
     //TODO sd task
 
     //configure and connect to wifi
-    //wifiInit();
+    wifiInit();
 
     //initialize SNTP and sync with NTP server
-    //sntpInit();
-    //xTaskCreate(sntpTask, "SNTPTask", 2048, nullptr, 1, &sntp_task_handle);
+    sntpInit();
+    xTaskCreate(sntpTask, "SNTPTask", 2048, nullptr, 1, &sntp_task_handle);
 
 
     //configure and subscribe to mqtt server
-    //mqttInit();
-    //xTaskCreate(mqttTask, "MQTTTask", 4096, nullptr, 1, &mqtt_task_handle);
+    mqttInit();
+    xTaskCreate(mqttTask, "MQTTTask", 4096, nullptr, 1, &mqtt_task_handle);
 
 
     //configure and initialize spi
@@ -1139,88 +1270,16 @@ extern "C" void app_main() {
     ESP_LOGI(TAG, "868 freq: 0x%02X%02X%02X", freq[0], freq[1], freq[2]);
 
 
-    //init done -> change pattern to idle
-    //xTaskNotify(led_task_handle, PTRN_ID_IDLE, eSetValueWithOverwrite);
-
-
-    //lora_868.setMode(SX127X_OP_MODE_SLEEP);
-    //lora1_434.receiveContinuous();
-
-    //uint32_t start = micros();
-    //uint32_t bytes_total = 0;
-
-
-    //register to tinymesh
-    packet_t packet;
-    uint8_t payload[256];
-
-    ret = tm.buildPacket(&packet, 255, TM_MSG_REGISTER);
-    printf("ret: ");
-    printBinary(ret, 16);
-    printf("\n");
-
-    printf("Register to TM\n");
-    lora1_434.transmit(packet.raw, packet.fields.data_length + TM_HEADER_LENGTH);
-    irq1 = false;
-
+    //configure radios
+    lora_868.setMode(SX127X_OP_MODE_SLEEP);
     lora1_434.receiveContinuous();
-    bool timeout = false;
-    uint32_t timer = micros();
-    
-    while (!irq1) {
-        if (micros() - timer > 1000 * 1000) {
-            timeout = true;
-            break;
-        }
-    }
-    printf("%ld\n", timer);
 
-    if (timeout) {
-        printf("TM Register timeout\n");
-        //set own address to something since we are the only gateway
-        tm.setAddress(1);
-        printf("I am the only gateway right now");
-    }
-    else {
-        printf("TM Got answer\n");
-        
-        uint8_t payload_len = getLoraPayload(&lora1_434, payload);
-        irq1 = false;
-
-        uint16_t ret = tm.readPacket(&packet, payload, payload_len);
-        printf("ret: ");
-        printBinary(ret, 16);
-        printf("\n");
-        printPacket(&packet);
-
-        if (ret)
-            printf("Broken answer\n");
-
-        if (packet.fields.msg_type == TM_MSG_ERR) {
-            printf("TM Err: ");
-            printBinary(packet.fields.data[0], 8);
-            printf("\n");
-        }
-        else if (packet.fields.msg_type == TM_MSG_DEVICE_CONFIG) {
-            printf("TM config\n");
-            tm.setAddress(packet.fields.data[0]);
-            ret = tm.buildAnswerHeader(&packet);
-            printf("ret: ");
-            printBinary(ret, 16);
-            printf("\n");
-            lora1_434.transmit(packet.raw, packet.fields.data_length + TM_HEADER_LENGTH);
-            lora1_434.receiveContinuous();
-        }
-        else {
-            printf("TM Invalid answer\n");
-        }
-    }
 
     xTaskNotify(led_task_handle, PTRN_ID_IDLE, eSetValueWithOverwrite);
 
 
 
-    timer = 0;
+    uint32_t timer = 0;
     //TODO
     while(true) {
         if (micros() - timer > 1000 * 1000) {
@@ -1228,26 +1287,37 @@ extern "C" void app_main() {
             printf("Hello world\n");
         }
 
+        //check queue for requests
+        //check all interfaces for incoming data
+        //TODO check all interfaces for new data
+        //TODO get payload from interface
+        //TODO convert it to packet
+        //TODO if valid, call handleIncomingPacket
         if (irq1) {
             irq1 = false;
+
             uint8_t payload[256] = {0};
-            uint8_t payload_len = getLoraPayload(&lora1_434, payload);
-            if (payload_len == 0)
-                continue;
-
-            tm.readPacket(&packet, payload, payload_len);
-            printPacket(&packet);
-        }
-        if (irq2) {
-            irq2 = false;
-
-        }
-        if (irq3) {
-            irq3 = false;
-
-        }
-        if (irq4) {
-            irq4 = false;
+            uint8_t len = getLoraPayload(&lora1_434, payload);
+            if (len != 0) {
+                auto ret = tm.readPacket(&packet, payload, len);
+                if (!ret) {
+                    printPacket(packet);
+                    //add packet to queue to be handled
+                }
+                else {
+                    printf("log malformed packet: ");
+                    printBinary(ret, 16);
+                    printf("\n");
+                }
+            }
+            else {
+                printf("log malformed payload\n");
+            }
+            //get payload
+            //get packet
+            //if packet is good
+            //handle it properly
+                //find 
 
         }
         vTaskDelay(pdMS_TO_TICKS(1));

@@ -519,6 +519,9 @@ public:
     uint16_t checkPacket(packet_t *packet);
 
 
+    uint16_t getMessageId(packet_t packet);
+
+
     /*----(CALLBACKS REQUIRED)----*/
 #if CALLBACKS == 1
     void registerHasData(bool (*func)());
