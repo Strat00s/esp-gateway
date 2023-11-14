@@ -227,7 +227,7 @@
 #define REG_FIFO_TX_BASE_ADDR                   0x0E
 #define REG_FIFO_RX_BASE_ADDR                   0x0F
 #define REG_FIFO_RX_CURRENT_ADDR                0x10
-//                                              0x11
+#define REG_IRQ_FLAGS_MASK                      0x11
 #define REG_IRQ_FLAGS                           0x12
 #define REG_RX_NB_BYTES                         0x13
 //                                              0x14

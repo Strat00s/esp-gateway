@@ -565,7 +565,7 @@ uint8_t SX127X::transmit(uint8_t *data, uint8_t length, uint8_t soft) {
 
     //if dio0 is not working properly, check the register instead of waiting for the pin to go high
     if (soft)
-        while(!(readRegister(REG_IRQ_FLAGS) & 0b00001000));
+        while(!(readRegister(REG_IRQ_FLAGS) & IRQ_FLAG_TX_DONE));
     //wait for transmission to end
     else
         while(!this->pinRead(this->dio0));
