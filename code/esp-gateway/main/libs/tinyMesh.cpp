@@ -1,5 +1,5 @@
 #include "tinyMesh.hpp"
-#include <cstring>
+#include <string.h>
 
 TinyMesh::TinyMesh() {
 
@@ -258,7 +258,7 @@ uint16_t TinyMesh::checkPacket(packet_t *packet) {
     return ret;
 }
 
-uint16_t getMessageId(packet_t packet) {
+uint16_t TinyMesh::getMessageId(packet_t packet) {
     return (((uint16_t)packet.fields.msg_id_msb) << 8) | ((uint16_t)packet.fields.msg_id_lsb);
 }
 
