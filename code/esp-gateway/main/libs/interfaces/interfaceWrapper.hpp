@@ -3,13 +3,16 @@
 
 //interface type
 
-#define IW_TYPE_MQTT     0
-#define IW_TYPE_LORA_434 1
-#define IW_TYPE_LORA_868 2
-#define IW_TYPE_LORA_2_4 3
-#define IW_TYPE_NRF24    4
-#define IW_TYPE_RF_443   5
-#define IW_TYPE_ESP_NOW  6
+#define IW_TYPE_NONE      0
+#define IW_TYPE_MQTT      1
+#define IW_TYPE_LORA_137M 2
+#define IW_TYPE_LORA_434M 3
+#define IW_TYPE_LORA_868M 4
+#define IW_TYPE_LORA_2_4G 5
+#define IW_TYPE_NRF24     6
+#define IW_TYPE_RF_443    7
+#define IW_TYPE_ESP_NOW   8
+#define IW_TYPE_ERR       8
 
 
 class interfaceWrapper {

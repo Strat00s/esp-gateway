@@ -140,6 +140,10 @@
 #define MQTT_SEVERITY_ERROR   3
 
 
+//Number of currently used interfaces
+#define INTERFACE_COUNT 1
+
+
 //blink pattern ids
 #define PTRN_ID_ERR  0
 #define PTRN_ID_IDLE 1
@@ -218,14 +222,27 @@ static blink_paptern blink_patpern_list[] = {
     },
 };
 
+
+//TODO transaction timout handler
+//ongoing transaction struct
 typedef struct {
-    packet_t packet;
-    uint32_t time_to_stale;
-    QueueHandle_t request_queue;
+    packet_t packet;                //previous transaction packet
+    uint32_t time_to_stale;         //how long till transaction is considered stale and is dropped
+    QueueHandle_t request_queue;    //queue to which to add received packet belonging to this transaction
 } transaction_t;
 
-std::deque<transaction_t> transactions; //TODO transaction timout handler
-std::deque<uint64_t> forward_list;  //time_to_stale | source_addr | port | msg_id   //TODO forward list timeout handler
+std::deque<transaction_t> transactions;
+
+//TODO forward list timeout handler
+std::deque<uint64_t> forward_list;  //time_to_stale 32b | source_addr 16b | port 8b | msg_id 8b
+
+//interface map for storing "best" interface for a device
+//TODO if device has more interfaces, save "the best one"
+//TODO store more interfaces
+std::map<uint8_t, interfaceWrapper *> interface_map;
+
+interfaceWrapper *interfaces[INTERFACE_COUNT] = {&lora434_it};
+
 
 //task handles
 static TaskHandle_t led_task_handle;
@@ -250,6 +267,7 @@ std::string ip_addr;
 //volatile bool irq2 = false;
 //volatile bool irq3 = false;
 //volatile bool irq4 = false;
+
 
 
 //SX127X library callbacks
@@ -310,7 +328,30 @@ void SPITransfer(uint8_t addr, uint8_t *buffer, size_t length) {
 //}
 
 
-//helper functions
+/*----(HELPER FUNCTIONS)----*/
+void printBinary(uint32_t num, uint8_t len) {
+    for (int i = 1; i < len + 1; i++) {
+        printf("%ld", (num >> (len - i)) & 1);
+    }
+}
+
+void printPacket(packet_t packet) {
+    printf("Version:             %d\n", packet.fields.version);
+    printf("Device type:         %d\n", packet.fields.device_type);
+    printf("Message id:          %d\n", (((uint16_t)packet.fields.msg_id_msb) << 8) | ((uint16_t)packet.fields.msg_id_lsb));
+    printf("Source address:      %d\n", packet.fields.source_addr);
+    printf("Destination address: %d\n", packet.fields.dest_addr);
+    printf("Message type:        %d\n", packet.fields.msg_type);
+    printf("Data length:         %d\n", packet.fields.data_length);
+    printf("Data: ");
+    for (int i = 0; i < packet.fields.data_length; i++) {
+        printBinary(packet.fields.data[i], 8);
+        printf(" ");
+    }
+    printf("\n");
+}
+
+
 /** @brief Get current time as a string
  * 
  * @return std::string - DD.MM.YYYY HH:MM:SS
@@ -376,6 +417,8 @@ static void log_error_if_nonzero(const char *message, int error_code) {
         ESP_LOGE(TAG, "Last error %s: 0x%x", message, error_code);
 }
 
+
+/*----(MAIN EVENT HANDLER)----*/
 //TODO envet handler refactor
 //default generic esp_event loop handler
 static void eventLoopHandler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
@@ -498,6 +541,7 @@ static void eventLoopHandler(void* arg, esp_event_base_t event_base, int32_t eve
 }
 
 
+/*----(INITIALIZATION)----*/
 void gpioInit() {
     static const char *TAG = "GPIO Init";
 
@@ -756,6 +800,7 @@ void configureLora(SX127X *lora, float freq, uint8_t sync_word, uint16_t preambl
 }
 
 
+/*----(TASKS)----*/
 //TODO refactor
 /** @brief Task to blink LED and also alive task to send mqtt alive messages
  * 
@@ -851,28 +896,64 @@ void mqttTask(void *args) {
     }
 }
 
+//TODO test
+/** @brief Ping task created when user request ping of some device over mqtt
+ * 
+ * 
+ * @param args destination address
+ */
+void pingTask(void *args) {
+    static const char* TAG = "PING TASK";
+    ESP_LOGI(TAG, "Ping task created\n");
 
+    QueueHandle_t pingQueue = xQueueCreate(1, sizeof(packet_t));
+    packet_t packet;
 
-void printBinary(uint32_t num, uint8_t len) {
-    for (int i = 1; i < len + 1; i++) {
-        printf("%ld", (num >> (len - i)) & 1);
+    //build packet
+    auto ret = tm.buildPacket(&packet, *(uint8_t *)args, TM_MSG_PING);
+    if (ret) {
+        ESP_LOGI(TAG, "Failed to build ping packet\n");
+        vTaskDelete(NULL);
     }
+
+    //send packet
+    handleOutgoingPacket(packet, pingQueue);
+
+    //start timer
+    auto timer = micros();
+    
+    //wait for response
+    auto q_ret = xQueueReceive(defaultResponseQueue, &packet, pdMS_TO_TICKS(2000));
+    
+    //timeout
+    if (q_ret == pdFALSE) {
+        ESP_LOGW(TAG, "Ping timeout\n");
+        vTaskDelete(NULL);
+    }
+
+    timer = micros() - timer;
+    ESP_LOGI(TAG, "Ping time: %ldus\n", timer);
+    printPacket(packet);
+
+    //TODO log data to mqtt
+
+    vTaskDelete(NULL);
 }
 
-void printPacket(packet_t packet) {
-    printf("Version:             %d\n", packet.fields.version);
-    printf("Device type:         %d\n", packet.fields.device_type);
-    printf("Message id:          %d\n", (((uint16_t)packet.fields.msg_id_msb) << 8) | ((uint16_t)packet.fields.msg_id_lsb));
-    printf("Source address:      %d\n", packet.fields.source_addr);
-    printf("Destination address: %d\n", packet.fields.dest_addr);
-    printf("Message type:        %d\n", packet.fields.msg_type);
-    printf("Data length:         %d\n", packet.fields.data_length);
-    printf("Data: ");
-    for (int i = 0; i < packet.fields.data_length; i++) {
-        printBinary(packet.fields.data[i], 8);
-        printf(" ");
+//TODO test
+void defaultResponseTask(void *args) {
+    static const char* TAG = "DEFAULT RESPONSE";
+    ESP_LOGI(TAG, "Default response task started");
+
+    defaultResponseQueue = xQueueCreate(2, sizeof(packet_t));   //queue for response packets
+    packet_t packet;
+
+    while (true) {
+        xQueueReceive(defaultResponseQueue, &packet, portMAX_DELAY);
+        ESP_LOGI(TAG, "Got response:\n");
+        printPacket(packet);
+        //TODO log to mqtt
     }
-    printf("\n");
 }
 
 
@@ -925,44 +1006,73 @@ void printPacket(packet_t packet) {
 //std::deque<route_entry_t> routing_table;
 
 
+/*----(SEND AND RECEIVE HANDLING)----*/
 /** @brief Transmit packet on specified interface
  * 
  * @param packet Packet in valid format
  * @param interface Interface id
  */
-void sendPacketOnInterface(interfaceWrapper *it, packet_t packet) {
-    static const char* TAG = "ON INTERFACE";
+uint8_t sendDataOnInterface(interfaceWrapper *it, uint8_t *data, uint8_t len) {
+    static const char* TAG = "SEND ON INTERFACE";
 
-    switch (it->getType()) {
-    //case INTERFACE_LORA_131M: ESP_LOGW(TAG, "NOT IMPLEMENTED YET\n"); break;
-    case IW_TYPE_LORA_434: 
-        //TODO somehow add interrupts or pin reading to interface wrappers
-        auto ret = it->transmitData(packet.raw, packet.fields.data_length + TM_HEADER_LENGTH);  //send the data
-        it->startReception();
-        break;
-    case IW_TYPE_LORA_868: ESP_LOGW(TAG, "NOT IMPLEMENTED YET\n"); break;
-    case IW_TYPE_LORA_2_4: ESP_LOGW(TAG, "NOT IMPLEMENTED YET\n"); break;
-    case IW_TYPE_ESP_NOW:  ESP_LOGW(TAG, "NOT IMPLEMENTED YET\n"); break;
-    case IW_TYPE_NRF24:    ESP_LOGW(TAG, "NOT IMPLEMENTED YET\n"); break;
-    case IW_TYPE_RF_443:   ESP_LOGW(TAG, "NOT IMPLEMENTED YET\n"); break;
-    case IW_TYPE_MQTT:     ESP_LOGW(TAG, "NOT IMPLEMENTED YET\n"); break;
-    default: break;
+    if (it == nullptr) {
+        ESP_LOGW(TAG, "Interface is null"); 
+        return;
     }
+
+    if (data == nullptr) {
+        ESP_LOGW(TAG, "Data is null"); 
+        return;
+    }
+
+    if (it->getType() > IW_TYPE_ERR) {
+        ESP_LOGW(TAG, "Unknown interface");
+        return;
+    }
+
+    ESP_LOGI(TAG, "Sending packet on interface %d", it->getType());
+
+    auto ret = it->transmitData(data, len);  //send the data
+    if (ret) {
+        ESP_LOGW(TAG, "Interface error: %d", ret);
+    }
+
+    it->startReception();
+
+    return ret;
 }
 
-std::map<uint8_t, std::vector<uint8_t>> interface_map;
-
 void handleOutgoingPacket(packet_t packet, QueueHandle_t queue = defaultResponseQueue) {
-    //TODO check routing
-        //TODO send packet to correct interface
-        //TODO send packet to all if no route found
-    
-    if (interface_map.contains(packet.fields.dest_addr)) {
+    static const char* TAG = "HANDLE OUTGOING";
 
+    bool some_succ = false;
+
+    //does node have a known interface?
+    auto search = interface_map.find(packet.fields.dest_addr);
+    if (search != interface_map.end()) {
+        uint8_t ret = sendDataOnInterface(search->second, packet.raw, packet.fields.data_length + TM_HEADER_LENGTH);
+        if (ret) {
+            ESP_LOGI(TAG, "Failed to send packet on interface %d: %d", search->second->getType(), ret);
+            return;
+        }
+    }
+    //unknown interface
+    else {
+        for (int i = 0; i < INTERFACE_COUNT; i++) {
+            uint8_t ret = sendDataOnInterface(interfaces[i], packet.raw, packet.fields.data_length + TM_HEADER_LENGTH);
+            //TODO multiple interfaces can fail and succed
+            if (ret) {
+                ESP_LOGI(TAG, "Failed to send packet on interface %d: %D", interfaces[i]->getType(), ret);
+                ret = 0;
+            }
+            else
+                some_succ = true;
+        }
     }
 
+    if (!some_succ)
+        return;
 
-    //TODO check that transmission was successful
     //save transaction
     transaction_t transcation = {
         .packet = packet,
@@ -976,63 +1086,6 @@ void handleOutgoingPacket(packet_t packet, QueueHandle_t queue = defaultResponse
 //save only when response is expected
 //on response (ok, err, config) remove device-port-message_id combination
 //delete after some time //TODO create task that goes through them and removes them when old enough
-
-
-/** @brief Ping task created when user request ping of some device over mqtt
- * 
- * 
- * @param args destination address
- */
-void pingTask(void *args) {
-    static const char* TAG = "PING TASK";
-
-    QueueHandle_t pingQueue = xQueueCreate(1, sizeof(packet_t));
-    packet_t packet;
-
-    //build packet
-    auto ret = tm.buildPacket(&packet, *(uint8_t *)args, TM_MSG_PING);
-    if (ret) {
-        ESP_LOGI(TAG, "Failed to build ping packet\n");
-        vTaskDelete(NULL);
-    }
-
-    //send packet
-    handleOutgoingPacket(packet, pingQueue);
-
-    //start timer
-    auto timer = micros();
-    
-    //wait for response
-    auto q_ret = xQueueReceive(defaultResponseQueue, &packet, pdMS_TO_TICKS(2000));
-    
-    //timeout
-    if (q_ret == pdFALSE) {
-        ESP_LOGW(TAG, "ping timeout\n");
-        vTaskDelete(NULL);
-    }
-
-    timer = micros() - timer;
-    ESP_LOGI(TAG, "ping time: %ldus\n", timer);
-    printPacket(packet);
-
-    //TODO log data to mqtt
-
-    vTaskDelete(NULL);
-}
-
-
-void defaultResponseTask(void *args) {
-    static const char* TAG = "DEFAULT RESPONSE";
-    
-    defaultResponseQueue = xQueueCreate(2, sizeof(packet_t));
-    packet_t packet;
-    while (true) {
-        xQueueReceive(defaultResponseQueue, &packet, portMAX_DELAY);
-        ESP_LOGI(TAG, "Got response:\n");
-        printPacket(packet);
-        //TODO log to mqtt
-    }
-}
 
 
 uint8_t handleIncomingPacket(packet_t packet) {
@@ -1254,31 +1307,28 @@ extern "C" void app_main() {
 
     uint32_t timer = 0;
     packet_t packet;
-    interfaceWrapper *interfaces[8] = {
-        &lora434_it, nullptr, nullptr, nullptr,
-            nullptr, nullptr, nullptr, nullptr
-    };
-
     while(true) {
         if (micros() - timer > 1000 * 1000) {
             timer = micros();
             printf("Hello world\n");
         }
 
-        //TODO interface count
-        for (size_t i = 0; i < 8; i++) {
-            if (interfaces[i] == nullptr)
+
+        for (size_t i = 0; i < INTERFACE_COUNT; i++) {
+            if (interfaces[i] == nullptr) {
+                ESP_LOGI(TAG, "Interface is null",);
                 continue;
+            }
 
             if (interfaces[i]->hasData()) {
-                ESP_LOGI(TAG, "Got data on interface %d\n", interfaces[i]->getType());
+                ESP_LOGI(TAG, "Got data on interface %d", interfaces[i]->getType());
                 
                 uint16_t ret;
                 uint8_t buf[256] = {0};
                 uint8_t len;
                 ret = interfaces[i]->getData(buf, &len);
                 if (ret) {
-                    ESP_LOGI(TAG, "Interface error %d\n", ret);
+                    ESP_LOGI(TAG, "Interface error %d", ret);
                     //TODO mqtt log
                     continue;
                 }
