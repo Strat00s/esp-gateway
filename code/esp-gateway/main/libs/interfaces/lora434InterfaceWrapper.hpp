@@ -5,10 +5,12 @@
 
 
 class lora434InterfaceWrapper : public interfaceWrapper{
-public:
+private:
     SX127X *lora;
 
-    lora434InterfaceWrapper(SX127X *lora) : interfaceWrapper(IW_TYPE_LORA_434) {
+public:
+
+    lora434InterfaceWrapper(SX127X *lora) : interfaceWrapper(IW_TYPE_LORA_434M) {
         this->lora = lora;
     }
 
@@ -35,7 +37,7 @@ public:
             return ret;
         }
 
-        lora_434.readData(buf);
+        lora->readData(buf);
         *len = lora->getPayloadLength();
         lora->clearIrqFlags();
         
