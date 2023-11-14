@@ -23,7 +23,7 @@ public:
     interfaceWrapper(uint8_t interface_type) {
         this->i_type = interface_type;
     }
-    ~interfaceWrapper();
+    ~interfaceWrapper() {};
 
     void setType(uint8_t interface_type) {
         this->i_type = interface_type;
