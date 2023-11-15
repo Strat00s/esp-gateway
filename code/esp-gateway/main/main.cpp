@@ -883,65 +883,71 @@ user can manully route it
     gateway will send route solicitation to node A with address and port of node B
 
 */
-void updateNode(packet_t packet, interfaceWrapper *interface) {
-    auto search = node_map.find(packet.fields.source_addr);
-
-    //brand new node
-    if (search == node_map.end()) {
-        node_info_t new_node;
-        new_node.name = "";
-        new_node.address = packet.fields.source_addr;
-        new_node.node_type = packet.fields.device_type;
-        new_node.interfaces[0] = interface;
-        new_node.interface_cnt = 1;
-
-        //add default port 0
-        //port_info_t new_port = {packet.fields.port, TM_PORT_INOUT | TM_PORT_DATA_CUSTOM};
-        //new_node.ports.push_back(new_port);
-
-        //if (packet.fields.dest_addr != 255)
-        //    new_node.routes.push_back({packet.fields.source_addr, packet.fields.dest_addr, new_port});
+node_info_t updateNode(uint8_t address, uint8_t port, uint8_t port_dir, uint8_t node_type = 0, interfaceWrapper *interface = nullptr) {
+    node_info_t node;
     
-        node_map[packet.fields.source_addr] = new_node;
+    auto search = node_map.find(address);
 
-        return;
-    }
-
-    //existing node
-    node_info_t existing_node = search->second;
-
-    //check if interface is known and if not add it
-    bool new_it = true;
-    for (int i = 0; i < existing_node.interface_cnt; i++) {
-        if (existing_node.interfaces[i] == interface) {
-            new_it = false;
-            break;
+    //create node
+    if (search == node_map.end()) {
+        node.name = "";
+        node.address = address;
+        node.node_type = node_type;
+        node.ports.push_back({port, port_dir});
+        if (interfaces == nullptr)
+            node.interface_cnt = 0;
+        else {
+            node.interfaces[0] = interface;
+            node.interface_cnt = 1;
         }
     }
-    if (new_it) {
-        existing_node.interfaces[existing_node.interface_cnt] = interface;
-        existing_node.interface_cnt++;
+    else {
+        node = search->second;
+        //update node type
+        if (node_type)
+            node.node_type = node_type;
+        
+        //check if new port is to be added
+        bool new_port = true;
+        for (int i = 0; i < node.ports.size(); i++) {
+            if (node.ports[i].port == port) {
+                new_port = false;
+                node.ports[i].data_type |= port_dir;
+                break;
+            }
+        }
+        if (new_port) {
+            node.ports.push_back({port, port_dir});
+        }
+
+        //exit now if no new interface is not to be added
+        if (interface == nullptr) {
+            node_map[address] = node;
+            return node;
+        }
+
+        //check and add new interface
+        bool new_it = true;
+        for (int i = 0; i < node.interface_cnt; i++) {
+            if (node.interfaces[i] == interface) {
+                new_it = false;
+                break;
+            }
+        }
+        if (new_it) {
+            node.interfaces[node.interface_cnt] = interface;
+            node.interface_cnt++;
+        }
     }
 
-    //check for port and add it
-    //bool new_port = true;
-    //for (size_t i = 0; i < existing_node.ports.size(); i++) {
-    //    if (existing_node.ports[i].port == packet.fields.port) {
-    //        existing_node.ports[i].data_type |= TM_PORT_OUT;
-    //        new_port = false;
-    //        break;
-    //    }
-    //}
-    //if (new_port)
-    //    existing_node.ports.push_back({packet.fields.port, TM_PORT_OUT});
+    node_map[address] = node;
+    return node;
 }
+
 
 //TODO
 uint8_t handleIncomingPacket(packet_t packet, interfaceWrapper *interface) {
     static const char* TAG = "HANDLE INCOMING";
-
-    if (tm.checkPacket(&packet))
-        return 1;
 
     ESP_LOGI(TAG, "Handling incoming packet");
 
@@ -954,7 +960,6 @@ uint8_t handleIncomingPacket(packet_t packet, interfaceWrapper *interface) {
         //flow already exists -> dont do anything
         if ((uint32_t)forward_list[i] == new_packet_id) {
             ESP_LOGI(TAG, "Packet already forwarded");
-            //TODO mqtt log
             return 0;
         }
     }
@@ -963,16 +968,18 @@ uint8_t handleIncomingPacket(packet_t packet, interfaceWrapper *interface) {
     uint32_t tts = micros() + 2 * 1000 * 1000;
     forward_list.push_back((uint64_t)tts << 32 | new_packet_id);
 
+    //update destination
+    if (packet.fields.dest_addr != 255)
+        updateNode(packet.fields.dest_addr, packet.fields.port, TM_PORT_IN);
 
-    //add data about node
-    if (packet.fields.source_addr != 0) {
-        updateNode(packet, interface);
-    }
+    //update sourcee
+    if (packet.fields.source_addr != 0)
+        updateNode(packet.fields.source_addr, packet.fields.port, TM_PORT_OUT, packet.fields.device_type, interface);
 
+    //TODO do not forward register
     //packet is to be forwarded
     if (packet.fields.dest_addr != tm.getAddress()) {
         handleOutgoingPacket(packet);
-        //TODO mqtt log
         if (packet.fields.dest_addr != TM_BROADCAST_ADDRESS)
             return 0;
     }
