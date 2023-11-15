@@ -21,7 +21,10 @@ public:
      * @return 0 on success, LORA ERR_... defines on error.
      */
     uint8_t transmitData(uint8_t *data, uint8_t len) {
-        return lora->transmit(data, len);
+        uint8_t ret = lora->transmit(data, len);
+        if (ret & IRQ_FLAG_TX_DONE)
+            return 0;
+        return 1;   //TODO
     }
 
     /** @brief Retrieve data from underlying LORA device. Automatically starts reception if it is terminated by reading data.
