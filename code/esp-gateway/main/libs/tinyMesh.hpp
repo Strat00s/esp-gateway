@@ -376,9 +376,9 @@ address + port -> define operations and data destination
 #define TM_PORT_DATA_CUSTOM 5
 
 //PORT DIRECTIONS
-#define TM_PORT_IN      0b00000000;
-#define TM_PORT_OUT     0b01000000;
-#define TM_PORT_INOUT   0b10000000;
+#define TM_PORT_IN      0b01000000
+#define TM_PORT_OUT     0b10000000
+#define TM_PORT_INOUT   0b11000000
 
 //NODE TYPES
 #define TM_TYPE_GATEWAY 0
