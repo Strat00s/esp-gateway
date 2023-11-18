@@ -1,10 +1,7 @@
 #pragma once
 #include <stdio.h>
 
-//TODO store send packet id
-//TODO check if packet is for us or is to be forwarded
-//TODO check if packet is answer to our request
-//TODO keep time?
+//TODO set mode without gateway
 
 //get data
 //build packet
@@ -223,7 +220,8 @@ Only custom messages are allowed to have flow of any size (continuous request, r
 #define TM_ERR_IN_FORWARD   3 //incoming packet is not for us and is to be forwarded
 #define TM_ERR_IN_DUPLICATE 4 //incoming packet is probably a diplicate
 
-#define TM_ERR_PORT_COUNT   1
+#define TM_ERR_PORT_COUNT 1
+#define TM_ERR_SENT_COUNT 1
 
 /*----(MESSAGE TYPES)----*/
 //response
@@ -276,8 +274,16 @@ Only custom messages are allowed to have flow of any size (continuous request, r
 #define TM_DEFAULT_ADDRESS   0
 #define TM_BROADCAST_ADDRESS 255
 #define TM_DEFAULT_PORT      0
+
+#ifndef TM_TIME_TO_STALE
+#define TM_TIME_TO_STALE     500 //time in ms for a saved packet to become stale
+#endif
+#ifndef TM_PORT_COUNT
 #define TM_PORT_COUNT        2
-#define TM_SENT_Q_SIZE       5
+#endif
+#ifndef TM_SENT_Q_SIZE
+#define TM_SENT_Q_SIZE       3 //this array is of type uint64_t, so it takes a lot of space!
+#endif
 
 
 typedef union{
@@ -318,14 +324,15 @@ private:
     uint8_t address         = 0;
     uint8_t gateway_address = 0;
     uint8_t node_type       = 0;
-
-    uint32_t sent_packets[TM_SENT_Q_SIZE] = {0};
-    port_cfg_t ports[TM_PORT_COUNT] = {0};
-    uint8_t port_cnt = 0;
+    uint8_t sent_cnt        = 0;
+    uint8_t port_cnt        = 0;
+    uint64_t sent_packets[TM_SENT_Q_SIZE] = {0};
+    port_cfg_t ports[TM_PORT_COUNT]       = {0};
 
 
     uint16_t lcg(uint16_t seed);
-    uint32_t createPacketID(uint16_t message_id, uint8_t src_addr, uint8_t dst_addr);
+    uint64_t createPacketID(uint16_t message_id, uint8_t src_addr, uint8_t dst_addr);
+    uint32_t (*millis)() = nullptr;
 
 public:
 
@@ -353,6 +360,14 @@ public:
      */
     TinyMesh(uint8_t version, uint8_t address, uint8_t node_type, uint16_t seed = 42069);
     ~TinyMesh();
+
+    /** @brief Register time keeping function for creating timestamps for packets.
+     * It is expected that this function returns time in milliseconds between individual calls of this function.
+     * If other time unit is used, edit TM_TIME_TO_STALE macro (or redefine it).
+     * 
+     * @param millis Function pointer to function returning milliseconds since boot
+     */
+    void registerMillis(uint32_t (*millis)());
 
     /** @brief Set protocol version.
      * Max version is TM_VERSION.
@@ -439,19 +454,22 @@ public:
 
     /** @brief Used before sending data on some interface to later check if incoming packet is an answer to our packet. 
      * Save packet to queue for later checking if incoming packet is an answer to rhis packet.
-     * Uses a continuous array of predefined size TM_SAVE_Q_SIZE and just shifts packet IDs if new one is to be added.
-     * Same array is also used for forwarded messages to check for duplicit packets.
+     * Uses a continuous array of predefined size TM_SAVE_Q_SIZE. If force == true, it will just shift packet IDs if new one is to be added.
+     * Same array is also used for forwarded messages to check for duplicit packets (should be called to save those too).
      * 
      * @param packet Packet whose poacket ID is to be created and stored
+     * @param force Force save packet even if there is not space left. Will just shift the last packet out of the array.
+     * @return TM_OK on success, TM_ERR_NO_SPACE if the underlying array is full.
      */
-    void savePacket(packet_t packet);
+    uint8_t savePacket(packet_t packet, bool force = false);
 
     /** @brief Clear entire sent_packet queue
      * 
      */
-    void clearSavedPackets();
+    void clearSavedPackets(bool force = false);
 
-    /** @brief Check if incoming packet is an answer to some of our previously sent packets (which were saved using savePacket()).
+    /** @brief Check if incoming packet is an answer to some of our previously sent packets, or is to be forwarded or is a duplicate.
+     * Request or any previous packet must first be saved using savePacket()).
      * 
      * @param packet Packet whose ID is to be checked
      * @return TM_OK on succes, TM_ERR_... on error.

@@ -20,12 +20,8 @@ TinyMesh::~TinyMesh() {
 }
 
 
-uint16_t TinyMesh::lcg(uint16_t seed = 0) {
-    static uint16_t x = seed;
-    uint16_t a = 25214903917 & 0xFFFF;
-    uint16_t c = 11;
-    x = (a * x + c) % (0xFFFF + 1);
-    return x;
+void TinyMesh::registerMillis(uint32_t (*millis)()) {
+    this->millis = millis;
 }
 
 
@@ -236,28 +232,52 @@ uint16_t TinyMesh::checkHeader(packet_t packet) {
     return ret;
 }
 
-uint32_t TinyMesh::createPacketID(uint16_t message_id, uint8_t src_addr, uint8_t dst_addr) {
-    return ((uint32_t)message_id) << 16 | ((uint16_t)src_addr) << 8 | dst_addr;
-}
 
-void TinyMesh::savePacket(packet_t packet) {
-    for (int i = TM_SENT_Q_SIZE - 1; i > 0; i--) {
-        sent_packets[i] = sent_packets[i - 1];
+uint8_t TinyMesh::savePacket(packet_t packet, bool force) {
+    if (sent_cnt >= TM_SENT_Q_SIZE) {
+        //if full and force, just shift everything
+        if (force) {
+            for (int i = TM_SENT_Q_SIZE - 1; i > 0; i--) {
+                sent_packets[i] = sent_packets[i - 1];
+            }
+            sent_packets[0] = createPacketID(getMessageId(packet), packet.fields.src_addr, packet.fields.dst_addr);
+        }
+        return TM_ERR_SENT_COUNT;
     }
-    //requests[0] = getMessageId(packet);
-    sent_packets[0] = createPacketID(getMessageId(packet), packet.fields.src_addr, packet.fields.dst_addr);
+
+    //find first empty space and save packet ID
+    for (int i = 0; i < TM_SENT_Q_SIZE; i++) {
+        if (sent_packets[i] == 0) {
+            sent_packets[i] = createPacketID(getMessageId(packet), packet.fields.src_addr, packet.fields.dst_addr);
+            break;
+        }
+    }
+    sent_cnt++;
+
+    return TM_OK;
 }
 
-void TinyMesh::clearSavedPackets() {
-    for (int i = 0; i < TM_SENT_Q_SIZE; i++)
-        sent_packets[i] = 0;
+void TinyMesh::clearSavedPackets(bool force) {
+    for (int i = 0; i < TM_SENT_Q_SIZE; i++) {
+        //remove all on force
+        if (force) {
+            sent_packets[i] = 0;
+            sent_cnt = 0;
+            continue;
+        }
+        //remove stale packet IDs
+        if (millis != nullptr && sent_packets[i] >> 32 <= millis()) {
+            sent_packets[i] = 0;
+            sent_cnt--;
+        }
+    }
 }
 
 uint8_t TinyMesh::checkPacket(packet_t packet) {
     //if packet is in sent queue, it is a duplicate packet
-    uint32_t packet_id = createPacketID(getMessageId(packet), packet.fields.src_addr, packet.fields.dst_addr);
+    uint64_t packet_id = createPacketID(getMessageId(packet), packet.fields.src_addr, packet.fields.dst_addr);
     for (int i = 0; i < TM_SENT_Q_SIZE; i++) {
-        if (packet_id == sent_packets[i])
+        if (packet_id << 32 == sent_packets[i] << 32)
             return TM_ERR_IN_DUPLICATE;
     }
     
@@ -269,7 +289,7 @@ uint8_t TinyMesh::checkPacket(packet_t packet) {
     //check if packet is a response to our previous request
     packet_id = createPacketID(getMessageId(packet) - 1, packet.fields.dst_addr, packet.fields.src_addr);
     for (int i = 0; i < TM_SENT_Q_SIZE; i++) {
-        if (packet_id == sent_packets[i]) {
+        if (packet_id << 32 == sent_packets[i] << 32) {
             //check for valid port
             bool has_port = false;
             for (int j = 0; j < TM_PORT_COUNT; j++) {
@@ -288,5 +308,21 @@ uint8_t TinyMesh::checkPacket(packet_t packet) {
     //packet is for us but is not a response -> new packet
     //user must save this packet manually
     return TM_OK;
+}
+
+
+uint64_t TinyMesh::createPacketID(uint16_t message_id, uint8_t src_addr, uint8_t dst_addr) {
+    uint32_t tts = 0;
+    if (millis != nullptr)
+        tts = millis() + TM_TIME_TO_STALE;
+    return ((uint64_t)tts) << 32 | ((uint32_t)message_id) << 16 | ((uint16_t)src_addr) << 8 | dst_addr;
+}
+
+uint16_t TinyMesh::lcg(uint16_t seed = 0) {
+    static uint16_t x = seed;
+    uint16_t a = 25214903917 & 0xFFFF;
+    uint16_t c = 11;
+    x = (a * x + c) % (0xFFFF + 1);
+    return x;
 }
 
