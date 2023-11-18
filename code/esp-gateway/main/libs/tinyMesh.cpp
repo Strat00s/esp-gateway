@@ -4,6 +4,7 @@
 
 TinyMesh::TinyMesh(uint8_t node_type, uint16_t seed) {
     setDeviceType(node_type);
+    addPort(0, TM_PORT_INOUT);
 }
 
 TinyMesh::TinyMesh(uint8_t address, uint8_t node_type, uint16_t seed) : TinyMesh(node_type, seed) {
@@ -37,7 +38,7 @@ void TinyMesh::setVersion(uint8_t version) {
 
 void TinyMesh::setAddress(uint8_t address) {
     if (address == 255)
-        this->address = 0;
+        this->address = TM_DEFAULT_ADDRESS;
     else
         this->address = address;
 }
@@ -71,6 +72,17 @@ uint16_t TinyMesh::getMessageId(packet_t packet) {
 }
 
 
+uint8_t TinyMesh::addPort(uint8_t port, uint8_t type) {
+    if (this->port_cnt >= TM_PORT_COUNT)
+        return TM_ERR_PORT_COUNT;
+    
+    this->ports[this->port_cnt] = {port, type};
+    this->port_cnt++;
+
+    return TM_OK;
+}
+
+
 uint16_t TinyMesh::buildPacket(packet_t *packet, uint8_t *buffer, uint8_t length) {
     uint16_t ret = TM_OK;
 
@@ -79,7 +91,7 @@ uint16_t TinyMesh::buildPacket(packet_t *packet, uint8_t *buffer, uint8_t length
 
     //at least header size
     if (length < TM_HEADER_LENGTH)
-        return TM_ERR_PACKET_LEN;
+        return TM_ERR_HEADER_LEN;
 
     //copy fields
     memcpy(packet->raw, buffer, TM_HEADER_LENGTH);
@@ -137,7 +149,7 @@ uint16_t TinyMesh::buildPacket(packet_t *packet, uint8_t destination, uint8_t me
 
     //no data, but length is given -> don't copy anything
     if (length != 0 && buffer == nullptr)
-        ret |= TM_ERR_DATA_NULL;
+        ret |= TM_ERR_NULL;
     //data are given
     else if (buffer != nullptr) {
         //valid length -> copy all data
@@ -166,11 +178,11 @@ uint16_t TinyMesh::checkHeader(packet_t packet) {
         ret |= TM_ERR_DEVICE_TYPE;
 
     //invalid message id
-    //if (packet.fields.msg_id_lsb == 0 && packet.fields.msg_id_msb == 0)
+    //if ()
     //    ret |= TM_ERR_MSG_ID;
 
     //invalid source address
-    if (packet.fields.src_addr == 255)
+    if (packet.fields.src_addr == TM_BROADCAST_ADDRESS)
         ret |= TM_ERR_SOURCE_ADDR;
 
     //unknown message type
@@ -178,8 +190,8 @@ uint16_t TinyMesh::checkHeader(packet_t packet) {
         ret |= TM_ERR_MSG_TYPE;
 
     //custom and port 0, predefined and port other than 0
-    if ((packet.fields.msg_type == TM_MSG_CUSTOM && packet.fields.port == 0) ||
-        (packet.fields.msg_type <  TM_MSG_CUSTOM && packet.fields.port != 0))
+    if ((packet.fields.msg_type == TM_MSG_CUSTOM && packet.fields.port == TM_DEFAULT_PORT) ||
+        (packet.fields.msg_type <  TM_MSG_CUSTOM && packet.fields.port != TM_DEFAULT_PORT))
         ret |= TM_ERR_MSG_TYPE_PORT;
 
     //data too long
@@ -222,5 +234,59 @@ uint16_t TinyMesh::checkHeader(packet_t packet) {
     }
 
     return ret;
+}
+
+uint32_t TinyMesh::createPacketID(uint16_t message_id, uint8_t src_addr, uint8_t dst_addr) {
+    return ((uint32_t)message_id) << 16 | ((uint16_t)src_addr) << 8 | dst_addr;
+}
+
+void TinyMesh::savePacket(packet_t packet) {
+    for (int i = TM_SENT_Q_SIZE - 1; i > 0; i--) {
+        sent_packets[i] = sent_packets[i - 1];
+    }
+    //requests[0] = getMessageId(packet);
+    sent_packets[0] = createPacketID(getMessageId(packet), packet.fields.src_addr, packet.fields.dst_addr);
+}
+
+void TinyMesh::clearSavedPackets() {
+    for (int i = 0; i < TM_SENT_Q_SIZE; i++)
+        sent_packets[i] = 0;
+}
+
+uint8_t TinyMesh::checkPacket(packet_t packet) {
+    //if packet is in sent queue, it is a duplicate packet
+    uint32_t packet_id = createPacketID(getMessageId(packet), packet.fields.src_addr, packet.fields.dst_addr);
+    for (int i = 0; i < TM_SENT_Q_SIZE; i++) {
+        if (packet_id == sent_packets[i])
+            return TM_ERR_IN_DUPLICATE;
+    }
+    
+    //user must save this packet manually
+    if (packet.fields.dst_addr != this->address) {
+        return TM_ERR_IN_FORWARD;
+    }
+
+    //check if packet is a response to our previous request
+    packet_id = createPacketID(getMessageId(packet) - 1, packet.fields.dst_addr, packet.fields.src_addr);
+    for (int i = 0; i < TM_SENT_Q_SIZE; i++) {
+        if (packet_id == sent_packets[i]) {
+            //check for valid port
+            bool has_port = false;
+            for (int j = 0; j < TM_PORT_COUNT; j++) {
+                if (ports[j].port == packet.fields.port) {
+                    has_port = true;
+                    break;
+                }
+            }
+            if (!has_port)
+                return TM_ERR_IN_PORT;
+            
+            return packet.fields.msg_type == TM_MSG_OK ? TM_OK : TM_ERR_IN_TYPE;
+        }
+    }
+
+    //packet is for us but is not a response -> new packet
+    //user must save this packet manually
+    return TM_OK;
 }
 

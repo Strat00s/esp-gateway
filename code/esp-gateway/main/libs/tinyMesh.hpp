@@ -1,6 +1,19 @@
 #pragma once
 #include <stdio.h>
 
+//TODO store send packet id
+//TODO check if packet is for us or is to be forwarded
+//TODO check if packet is answer to our request
+//TODO keep time?
+
+//get data
+//build packet
+//check packet
+//is it for us?
+    //forward it if not
+    //is it valid port?
+        //if so, answer
+        //if not, error answer
 
 //TODO consistency
 /*
@@ -188,27 +201,34 @@ Only custom messages are allowed to have flow of any size (continuous request, r
 //RETURN FLAGS
 #define TM_OK                   0b0000000000000000
 
-#define TM_ERR_NULL             0b0000000000000001
-#define TM_ERR_PACKET_LEN       0b0000000000000010
-#define TM_ERR_TRUNCATED        0b0000000000000100
+#define TM_ERR_NULL             0b0000000000000001 //packet is null or given buffer is null
+#define TM_ERR_HEADER_LEN       0b0000000000000010 //invalid header length
+#define TM_ERR_TRUNCATED        0b0000000000000100 //data truncated during copying (probably buffer length)
 
-#define TM_ERR_VERSION          0b0000000000001000
-#define TM_ERR_MSG_ID           0b0000000000010000
-#define TM_ERR_DEVICE_TYPE      0b0000000000100000
-#define TM_ERR_SOURCE_ADDR      0b0000000001000000
-#define TM_ERR_DATA_LEN         0b0000000010000000
-#define TM_ERR_MSG_TYPE         0b0000000100000000
-#define TM_ERR_MSG_TYPE_PORT    0b0000001000000000
-#define TM_ERR_MSG_TYPE_ADDRESS 0b0000010000000000
-#define TM_ERR_MSG_TYPE_LEN     0b0000100000000000
-#define TM_ERR_DATA_NULL        0b0001000000000000
+#define TM_ERR_VERSION          0b0000000000001000 //invalid version in header
+//#define TM_ERR_MSG_ID           0b0000000000010000 //TODO NOT USED
+#define TM_ERR_DEVICE_TYPE      0b0000000000100000 //unknown device type in header
+#define TM_ERR_SOURCE_ADDR      0b0000000001000000 //invalid source address in header
+#define TM_ERR_DATA_LEN         0b0000000010000000 //invalid data length in header
+#define TM_ERR_MSG_TYPE         0b0000000100000000 //invalid message type in header
+#define TM_ERR_MSG_TYPE_PORT    0b0000001000000000 //invalid message type and port combination
+#define TM_ERR_MSG_TYPE_ADDRESS 0b0000010000000000 //invalid message type and address combination
+#define TM_ERR_MSG_TYPE_LEN     0b0000100000000000 //invalid message type and length combination
+//#define TM_ERR_DATA_NULL        0b0001000000000000 //data to be copied are null
 
-#define TM_ERR_CFG_ADDRESS      0b0010000000000000
+//#define TM_ERR_CFG_ADDRESS      0b0010000000000000
+
+#define TM_ERR_IN_TYPE      1 //incoming packet is a response but is not OK or ERR
+#define TM_ERR_IN_PORT      2 //incoming packet is for us but port is not registed
+#define TM_ERR_IN_FORWARD   3 //incoming packet is not for us and is to be forwarded
+#define TM_ERR_IN_DUPLICATE 4 //incoming packet is probably a diplicate
+
+#define TM_ERR_PORT_COUNT   1
 
 /*----(MESSAGE TYPES)----*/
 //response
-#define TM_MSG_OK            0
-#define TM_MSG_ERR           1
+#define TM_MSG_OK            0 //ok erponse
+#define TM_MSG_ERR           1 //error response
 
 //request
 #define TM_MSG_PING          2  //ping device
@@ -217,52 +237,47 @@ Only custom messages are allowed to have flow of any size (continuous request, r
 #define TM_MSG_PORT_ADVERT   4  //advertise custom port for listening/accepting data on
 #define TM_MSG_ROUTE_SOLICIT 5  //when user manually routes ports and addresses, send this to output node
 #define TM_MSG_ROUTE_ANOUNC  6  //anounc already known routes
-#define TM_MSG_RESET         7  //
+#define TM_MSG_RESET         7  //request a device configuration reset
 #define TM_MSG_STATUS        8  //RAW string
 #define TM_MSG_COMBINED      9  //data contain multiple messages in format |TYPE|LEN|DATA|TYPE...
 #define TM_MSG_CUSTOM        10 //send custom data (to some port)
 
 //PORT DATA TYPES
-#define TM_PORT_DATA_NONE   0
-#define TM_PORT_DATA_INT8   1
-#define TM_PORT_DATA_INT16  2
-#define TM_PORT_DATA_INT32  3
-#define TM_PORT_DATA_STR    4
-#define TM_PORT_DATA_CUSTOM 5
+#define TM_PORT_DATA_NONE   0 //port has no defined data type (empty payload)
+#define TM_PORT_DATA_INT8   1 //port has a 8b int data type
+#define TM_PORT_DATA_INT16  2 //port has a 16b int data type
+#define TM_PORT_DATA_INT32  3 //port has a 32b int data type
+#define TM_PORT_DATA_STR    4 //port has a string as data type
+#define TM_PORT_DATA_CUSTOM 5 //port has custom data type
 
 //PORT DIRECTIONS
-#define TM_PORT_IN      0b01000000
-#define TM_PORT_OUT     0b10000000
-#define TM_PORT_INOUT   0b11000000
+#define TM_PORT_IN      0b01000000 //port is for incoming communication
+#define TM_PORT_OUT     0b10000000 //port is for outocming communication
+#define TM_PORT_INOUT   0b11000000 //port is for both incoming and outcoming communication
 
 //NODE TYPES
-#define TM_TYPE_GATEWAY 0
-#define TM_TYPE_NODE    1
-#define TM_TYPE_LP_NODE 2
-
-//ERROR CODES
-#define TM_EC_CFG_ADDRESS 1
-#define TM_
+#define TM_TYPE_GATEWAY 0 //device is a gateway
+#define TM_TYPE_NODE    1 //device is a normal node
+#define TM_TYPE_LP_NODE 2 //device is a low power node
 
 
-#define TM_POS_VERSION  0
-#define TM_POS_DEV_TYPE 1
-#define TM_POS_MSG_ID_M 2
-#define TM_POS_MSG_ID_L 3
-#define TM_POS_SRC_ADDR 4
-#define TM_POS_DST_ADDR 5
-#define TM_POS_PORT     6
-#define TM_POS_MSG_TYPE 7
-#define TM_POS_DATA_LEN 8
+#define TM_POS_VERSION  0 //position of version byte in header
+#define TM_POS_DEV_TYPE 1 //position of device tpye byte in header
+#define TM_POS_MSG_ID_M 2 //position of MSB of message ID byte in header
+#define TM_POS_MSG_ID_L 3 //position of LSB if message ID byte in header
+#define TM_POS_SRC_ADDR 4 //possition of source address byte in header
+#define TM_POS_DST_ADDR 5 //position of destination address byte in header
+#define TM_POS_PORT     6 //position of port byte in header
+#define TM_POS_MSG_TYPE 7 //position of message type byte in header
+#define TM_POS_DATA_LEN 8 //position of data length byte in header
 
 
 //DEFAULT CONFIG
 #define TM_DEFAULT_ADDRESS   0
 #define TM_BROADCAST_ADDRESS 255
 #define TM_DEFAULT_PORT      0
-
-#define PORT_COUNT      10
-#define SEND_QUEUE_SIZE 10
+#define TM_PORT_COUNT        2
+#define TM_SENT_Q_SIZE       5
 
 
 typedef union{
@@ -295,6 +310,8 @@ typedef struct {
     uint8_t type;
 } port_cfg_t;
 
+
+
 class TinyMesh {
 private:
     uint8_t version         = TM_VERSION;
@@ -302,7 +319,13 @@ private:
     uint8_t gateway_address = 0;
     uint8_t node_type       = 0;
 
+    uint32_t sent_packets[TM_SENT_Q_SIZE] = {0};
+    port_cfg_t ports[TM_PORT_COUNT] = {0};
+    uint8_t port_cnt = 0;
+
+
     uint16_t lcg(uint16_t seed);
+    uint32_t createPacketID(uint16_t message_id, uint8_t src_addr, uint8_t dst_addr);
 
 public:
 
@@ -369,6 +392,8 @@ public:
      */
     uint16_t getMessageId(packet_t packet);
 
+    uint8_t addPort(uint8_t port, uint8_t type);
+
     /** @brief Build packet from a buffer.
      * 
      * @param packet Packet to which to store header and data
@@ -411,4 +436,25 @@ public:
      * @return TM_OK on succes, TM_ERR_... macros on error
      */
     uint16_t checkHeader(packet_t packet);
+
+    /** @brief Used before sending data on some interface to later check if incoming packet is an answer to our packet. 
+     * Save packet to queue for later checking if incoming packet is an answer to rhis packet.
+     * Uses a continuous array of predefined size TM_SAVE_Q_SIZE and just shifts packet IDs if new one is to be added.
+     * Same array is also used for forwarded messages to check for duplicit packets.
+     * 
+     * @param packet Packet whose poacket ID is to be created and stored
+     */
+    void savePacket(packet_t packet);
+
+    /** @brief Clear entire sent_packet queue
+     * 
+     */
+    void clearSavedPackets();
+
+    /** @brief Check if incoming packet is an answer to some of our previously sent packets (which were saved using savePacket()).
+     * 
+     * @param packet Packet whose ID is to be checked
+     * @return TM_OK on succes, TM_ERR_... on error.
+     */
+    uint8_t checkPacket(packet_t packet);
 };
