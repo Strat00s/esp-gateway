@@ -215,10 +215,12 @@ Only custom messages are allowed to have flow of any size (continuous request, r
 
 //#define TM_ERR_CFG_ADDRESS      0b0010000000000000
 
-#define TM_ERR_IN_TYPE      1 //incoming packet is a response but is not OK or ERR
-#define TM_ERR_IN_PORT      2 //incoming packet is for us but port is not registed
-#define TM_ERR_IN_FORWARD   3 //incoming packet is not for us and is to be forwarded
-#define TM_ERR_IN_DUPLICATE 4 //incoming packet is probably a diplicate
+#define TM_IN_ANSWER        0
+#define TM_IN_REQUEST       1
+#define TM_ERR_IN_TYPE      2 //incoming packet is a response but is not OK or ERR
+#define TM_ERR_IN_PORT      3 //incoming packet is for us but port is not registed
+#define TM_ERR_IN_FORWARD   4 //incoming packet is not for us and is to be forwarded
+#define TM_ERR_IN_DUPLICATE 5 //incoming packet is probably a diplicate
 
 #define TM_ERR_PORT_COUNT 1
 #define TM_ERR_SENT_COUNT 1
@@ -330,8 +332,8 @@ private:
     port_cfg_t ports[TM_PORT_COUNT]       = {0};
 
 
-    uint16_t lcg(uint16_t seed);
-    uint64_t createPacketID(uint16_t message_id, uint8_t src_addr, uint8_t dst_addr);
+    uint16_t lcg(uint16_t seed = 0);
+    uint64_t createPacketID(uint16_t message_id, uint8_t src_addr, uint8_t dst_addr, uint32_t time = 0);
     uint32_t (*millis)() = nullptr;
 
 public:
@@ -457,16 +459,19 @@ public:
      * Uses a continuous array of predefined size TM_SAVE_Q_SIZE. If force == true, it will just shift packet IDs if new one is to be added.
      * Same array is also used for forwarded messages to check for duplicit packets (should be called to save those too).
      * 
-     * @param packet Packet whose poacket ID is to be created and stored
+     * @param packet Packet whose poacket ID is to be created and stored.
+     * @param time Current time in ms to which TM_TIME_TO_STALE is added when saving. When 0 registered millis function is used or tts is set to 0.
      * @param force Force save packet even if there is not space left. Will just shift the last packet out of the array.
      * @return TM_OK on success, TM_ERR_NO_SPACE if the underlying array is full.
      */
-    uint8_t savePacket(packet_t packet, bool force = false);
+    uint8_t savePacket(packet_t packet, uint32_t time = 0, bool force = false);
 
     /** @brief Clear entire sent_packet queue
      * 
+     * @param time Current time in ms to compare packet tts with. If 0, registered millis is used or packet is not cleared.
+     * @param force Force clear all packets
      */
-    void clearSavedPackets(bool force = false);
+    void clearSavedPackets(uint32_t time = 0, bool force = false);
 
     /** @brief Check if incoming packet is an answer to some of our previously sent packets, or is to be forwarded or is a duplicate.
      * Request or any previous packet must first be saved using savePacket()).

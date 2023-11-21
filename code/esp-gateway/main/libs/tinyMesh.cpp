@@ -233,14 +233,14 @@ uint16_t TinyMesh::checkHeader(packet_t packet) {
 }
 
 
-uint8_t TinyMesh::savePacket(packet_t packet, bool force) {
+uint8_t TinyMesh::savePacket(packet_t packet, uint32_t time, bool force) {
     if (sent_cnt >= TM_SENT_Q_SIZE) {
         //if full and force, just shift everything
         if (force) {
             for (int i = TM_SENT_Q_SIZE - 1; i > 0; i--) {
                 sent_packets[i] = sent_packets[i - 1];
             }
-            sent_packets[0] = createPacketID(getMessageId(packet), packet.fields.src_addr, packet.fields.dst_addr);
+            sent_packets[0] = createPacketID(getMessageId(packet), packet.fields.src_addr, packet.fields.dst_addr, time);
         }
         return TM_ERR_SENT_COUNT;
     }
@@ -248,7 +248,7 @@ uint8_t TinyMesh::savePacket(packet_t packet, bool force) {
     //find first empty space and save packet ID
     for (int i = 0; i < TM_SENT_Q_SIZE; i++) {
         if (sent_packets[i] == 0) {
-            sent_packets[i] = createPacketID(getMessageId(packet), packet.fields.src_addr, packet.fields.dst_addr);
+            sent_packets[i] = createPacketID(getMessageId(packet), packet.fields.src_addr, packet.fields.dst_addr, time);
             break;
         }
     }
@@ -257,7 +257,7 @@ uint8_t TinyMesh::savePacket(packet_t packet, bool force) {
     return TM_OK;
 }
 
-void TinyMesh::clearSavedPackets(bool force) {
+void TinyMesh::clearSavedPackets(uint32_t time,  bool force) {
     for (int i = 0; i < TM_SENT_Q_SIZE; i++) {
         //remove all on force
         if (force) {
@@ -266,7 +266,7 @@ void TinyMesh::clearSavedPackets(bool force) {
             continue;
         }
         //remove stale packet IDs
-        if (millis != nullptr && sent_packets[i] >> 32 <= millis()) {
+        if ((millis != nullptr && sent_packets[i] >> 32 <= millis()) || (time && sent_packets[i] >> 32 <= time)) {
             sent_packets[i] = 0;
             sent_cnt--;
         }
@@ -301,24 +301,27 @@ uint8_t TinyMesh::checkPacket(packet_t packet) {
             if (!has_port)
                 return TM_ERR_IN_PORT;
             
-            return packet.fields.msg_type == TM_MSG_OK ? TM_OK : TM_ERR_IN_TYPE;
+            //packet is a valid answer to our request
+            if (packet.fields.msg_type == TM_MSG_OK || packet.fields.msg_type == TM_MSG_ERR || packet.fields.msg_type == TM_MSG_CUSTOM)
+                return TM_IN_ANSWER;
+
+            return TM_ERR_IN_TYPE;
         }
     }
 
     //packet is for us but is not a response -> new packet
     //user must save this packet manually
-    return TM_OK;
+    return TM_IN_REQUEST;
 }
 
 
-uint64_t TinyMesh::createPacketID(uint16_t message_id, uint8_t src_addr, uint8_t dst_addr) {
-    uint32_t tts = 0;
-    if (millis != nullptr)
-        tts = millis() + TM_TIME_TO_STALE;
-    return ((uint64_t)tts) << 32 | ((uint32_t)message_id) << 16 | ((uint16_t)src_addr) << 8 | dst_addr;
+uint64_t TinyMesh::createPacketID(uint16_t message_id, uint8_t src_addr, uint8_t dst_addr, uint32_t time) {
+    if (millis != nullptr && !time)
+        time = millis() + TM_TIME_TO_STALE;
+    return ((uint64_t)time) << 32 | ((uint32_t)message_id) << 16 | ((uint16_t)src_addr) << 8 | dst_addr;
 }
 
-uint16_t TinyMesh::lcg(uint16_t seed = 0) {
+uint16_t TinyMesh::lcg(uint16_t seed) {
     static uint16_t x = seed;
     uint16_t a = 25214903917 & 0xFFFF;
     uint16_t c = 11;

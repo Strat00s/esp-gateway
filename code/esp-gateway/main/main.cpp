@@ -69,6 +69,10 @@
 #include <esp_netif_sntp.h>
 
 
+/*----(FUNCTION MACROS)----*/
+#define CHECK_RET(X, Y, Z) {if (X) {ESP_LOGI(TAG, Y);printBinary(X, 16);printf("\n"); Z;}}
+
+
 /*----(Pin defines)----*/
 //I2C
 #define SDA GPIO_NUM_6
@@ -314,7 +318,9 @@ void SPITransfer(uint8_t addr, uint8_t *buffer, size_t length) {
     ESP_ERROR_CHECK(spi_device_polling_transmit(dev_handl, &t));
 }
 
-
+uint32_t millis() {
+    return esp_timer_get_time() / 1000;
+}
 
 /*----(HELPER FUNCTIONS)----*/
 void printBinary(uint32_t num, uint8_t len) {
@@ -895,7 +901,7 @@ node_info_t updateNode(uint8_t address, uint8_t port, uint8_t port_dir, uint8_t 
         node.address = address;
         node.node_type = node_type;
         node.ports.push_back({port, port_dir});
-        if (interfaces == nullptr)
+        if (interface == nullptr)
             node.interface_cnt = 0;
         else {
             node.interfaces[0] = interface;
@@ -1421,26 +1427,35 @@ extern "C" void app_main() {
                 uint8_t buf[256] = {0};
                 uint8_t len;
                 uint16_t ret = interfaces[i]->getData(buf, &len);
-                if (ret) {
-                    ESP_LOGI(TAG, "Interface get error: ");
-                    printBinary(ret, 16);
-                    printf("\n");
-                    continue;
-                }
+                CHECK_RET(ret, "Interface get error: ", continue);
 
                 packet_t packet = {0};
                 ret = tm.buildPacket(&packet, buf, len);
-                if (ret) {
-                    ESP_LOGI(TAG, "Packet error: ");
-                    printBinary(ret, 16);
-                    printf("\n");
-                    printPacket(packet);
-                    continue;
+                CHECK_RET(ret, "Packet error: ", continue);
+                
+                ret = tm.checkPacket(packet);
+                CHECK_RET(ret & TM_ERR_IN_DUPLICATE, "Duplicate packet: ", continue);
+                CHECK_RET(ret & TM_ERR_IN_PORT, "Invalid packet port: ", continue);
+                CHECK_RET(ret & TM_ERR_IN_TYPE, "Invalid packet type: ", continue);
+
+                if (ret & TM_ERR_IN_FORWARD) {
+                    ESP_LOGI(TAG, "Packet is to be forwarded");
+                    //TODO forward
+                    //TODO save
+                }
+                else if (ret & TM_IN_ANSWER) {
+                    ESP_LOGI(TAG, "Packet is an answer");
+                    //TODO handle
+                    //TODO save
+                }
+                else if (ret & TM_IN_REQUEST) {
+                    ESP_LOGI(TAG, "Packet is a request");
+                    //TODO handle
+                    //TODO save
                 }
 
-                ESP_LOGI(TAG, "Got probably valid packed");
-                printPacket(packet);
-                ret = handleIncomingPacket(packet, interfaces[i]);
+                ret = tm.savePacket(packet);
+                CHECK_RET(ret, "Failed to save packet: ", continue);
             }
         }
 
