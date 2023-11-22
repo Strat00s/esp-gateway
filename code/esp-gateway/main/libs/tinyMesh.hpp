@@ -1,5 +1,5 @@
 #pragma once
-#include <stdio.h>
+#include <stdint.h>
 
 //TODO set mode without gateway
 
@@ -213,14 +213,18 @@ Only custom messages are allowed to have flow of any size (continuous request, r
 #define TM_ERR_MSG_TYPE_LEN     0b0000100000000000 //invalid message type and length combination
 //#define TM_ERR_DATA_NULL        0b0001000000000000 //data to be copied are null
 
+//TM_ERR_MESSAGES 
+#define TM_SERVICE_NOT_IMPLEMENTED 1
+
 //#define TM_ERR_CFG_ADDRESS      0b0010000000000000
 
-#define TM_IN_ANSWER        0
-#define TM_IN_REQUEST       1
-#define TM_ERR_IN_TYPE      2 //incoming packet is a response but is not OK or ERR
-#define TM_ERR_IN_PORT      3 //incoming packet is for us but port is not registed
-#define TM_ERR_IN_FORWARD   4 //incoming packet is not for us and is to be forwarded
-#define TM_ERR_IN_DUPLICATE 5 //incoming packet is probably a diplicate
+#define TM_IN_ANSWER        0 //OK, ERR and custom are the only valid responses
+#define TM_IN_REQUEST       1 //packet is a request
+#define TM_IN_BROADCAST     2 //packet is a broadcast -> don't answer, handle and forward
+#define TM_ERR_IN_TYPE      3 //incoming packet is a response but is not OK or ERR or custom
+#define TM_ERR_IN_PORT      4 //incoming packet is for us but port is not registed
+#define TM_ERR_IN_FORWARD   5 //incoming packet is not for us and is to be forwarded
+#define TM_ERR_IN_DUPLICATE 6 //incoming packet is probably a diplicate
 
 #define TM_ERR_PORT_COUNT 1
 #define TM_ERR_SENT_COUNT 1
@@ -278,13 +282,13 @@ Only custom messages are allowed to have flow of any size (continuous request, r
 #define TM_DEFAULT_PORT      0
 
 #ifndef TM_TIME_TO_STALE
-#define TM_TIME_TO_STALE     500 //time in ms for a saved packet to become stale
+#define TM_TIME_TO_STALE     5000 //time in ms for a saved packet to become stale
 #endif
 #ifndef TM_PORT_COUNT
 #define TM_PORT_COUNT        2
 #endif
 #ifndef TM_SENT_Q_SIZE
-#define TM_SENT_Q_SIZE       3 //this array is of type uint64_t, so it takes a lot of space!
+#define TM_SENT_Q_SIZE       10 //this array is of type uint64_t, so it takes a lot of space!
 #endif
 
 
@@ -333,7 +337,6 @@ private:
 
 
     uint16_t lcg(uint16_t seed = 0);
-    uint64_t createPacketID(uint16_t message_id, uint8_t src_addr, uint8_t dst_addr, uint32_t time = 0);
     uint32_t (*millis)() = nullptr;
 
 public:
@@ -454,6 +457,24 @@ public:
      */
     uint16_t checkHeader(packet_t packet);
 
+    /** @brief Create packet ID that is mostly internally used to save sent/forwarded packets
+     * 
+     * @param message_id Packet message ID
+     * @param src_addr Packet source address
+     * @param dst_addr Packet destination address
+     * @param time Time of packet ID creation
+     * @return 
+     */
+    uint64_t createPacketID(uint16_t message_id, uint8_t src_addr, uint8_t dst_addr, uint32_t time = 0);
+
+    /** @brief Create packet ID that is mostly internally used to save sent/forwarded packets
+     * 
+     * @param packet Packet whose ID is to be created 
+     * @param time Time of packet ID creation
+     * @return 
+     */
+    uint64_t createPacketID(packet_t packet, uint32_t time = 0);
+
     /** @brief Used before sending data on some interface to later check if incoming packet is an answer to our packet. 
      * Save packet to queue for later checking if incoming packet is an answer to rhis packet.
      * Uses a continuous array of predefined size TM_SAVE_Q_SIZE. If force == true, it will just shift packet IDs if new one is to be added.
@@ -471,13 +492,13 @@ public:
      * @param time Current time in ms to compare packet tts with. If 0, registered millis is used or packet is not cleared.
      * @param force Force clear all packets
      */
-    void clearSavedPackets(uint32_t time = 0, bool force = false);
+    uint8_t clearSavedPackets(uint32_t time = 0, bool force = false);
 
     /** @brief Check if incoming packet is an answer to some of our previously sent packets, or is to be forwarded or is a duplicate.
      * Request or any previous packet must first be saved using savePacket()).
      * 
      * @param packet Packet whose ID is to be checked
-     * @return TM_OK on succes, TM_ERR_... on error.
+     * @return TM_IN_ANSWER or TM_IN_REQUEST if packet is valid for us, TM_ERR_IN... otherwise.
      */
     uint8_t checkPacket(packet_t packet);
 };
