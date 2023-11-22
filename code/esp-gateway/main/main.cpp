@@ -10,6 +10,9 @@
 //TODO access to SPI must be thread safe
 //TODO mqtt class
 //TODO store saved data somewhere
+//TODO dont update nodes automatically, wait for port anouncement and such
+//TODO node map
+//TODO routes
 
 
 #include <stdio.h>
@@ -70,7 +73,8 @@
 
 
 /*----(FUNCTION MACROS)----*/
-#define CHECK_RET(X, Y, Z) {if (X) {ESP_LOGI(TAG, Y);printBinary(X, 16);printf("\n"); Z;}}
+#define IF_X_FALSE(x, msg, cmd)        {if (x) {ESP_LOGI(TAG, msg);printf("\n"); cmd;}}
+#define IF_X_TRUE(x, bits, msg, cmd)   {if (x) {ESP_LOGI(TAG, msg);printBinary(x, bits);printf("\n"); cmd;}}
 
 
 /*----(Pin defines)----*/
@@ -222,10 +226,11 @@ typedef struct {
     QueueHandle_t request_queue;    //queue to which to add received packet belonging to this transaction
 } transaction_t;
 
-ThreadSafeDeque<transaction_t> transactions;
+//ThreadSafeDeque<transaction_t> transactions;
 //TODO forward list timeout handler
 ThreadSafeDeque<uint64_t> forward_list;  //time_to_stale 32b | src_addr 16b | port 8b | msg_id 8b
 
+std::map<uint32_t, QueueHandle_t> request_packet_qs;
 
 //TODO think about ports again (in, out, routing)
 //typedef struct {
@@ -242,7 +247,7 @@ typedef struct {
 std::deque<route_info_t> user_routes;   //routes programable by the user via mqtt
 
 typedef struct {
-    std::string name;
+    std::string name = "";
     uint8_t address;
     uint8_t node_type;
     std::deque<port_cfg_t> ports;
@@ -271,6 +276,10 @@ static QueueHandle_t defaultResponseQueue;
 //wifi
 static int s_retry_num = 0;
 std::string ip_addr;
+
+
+#define STARTING_ADDRESS 10
+uint8_t node_id = STARTING_ADDRESS;
 
 
 
@@ -798,7 +807,7 @@ void configureLora(SX127X *lora, float freq, uint8_t sync_word, uint16_t preambl
 
 /*----(SEND AND RECEIVE HANDLING)----*/
 //TODO test
-/** @brief Transmit packet on specified interface
+/** @brief Transmit packet on specified interface and start reception after transmission
  * 
  * @param packet Packet in valid format
  * @param interface Interface id
@@ -806,53 +815,40 @@ void configureLora(SX127X *lora, float freq, uint8_t sync_word, uint16_t preambl
 uint8_t sendDataOnInterface(interfaceWrapper *it, uint8_t *data, uint8_t len) {
     static const char* TAG = "SEND ON INTERFACE";
 
-    if (it == nullptr) {
-        ESP_LOGW(TAG, "Interface is null"); 
-        return 255; //TODO returns
-    }
+    //TODO returns
+    IF_X_TRUE(it == nullptr, 0, "Interface is null", return 255);
+    IF_X_TRUE(data == nullptr, 0, "Data is null", return 255); 
+    IF_X_TRUE(it->getType() >= IW_TYPE_ERR, 0, "Unknown interface", return 255);
 
-    if (data == nullptr) {
-        ESP_LOGW(TAG, "Data is null"); 
-        return 255;
-    }
-
-    if (it->getType() > IW_TYPE_ERR) {
-        ESP_LOGW(TAG, "Unknown interface");
-        return 255;
-    }
 
     ESP_LOGI(TAG, "Sending data on interface %d", it->getType());
-
     auto ret = it->transmitData(data, len);  //send the data
-    if (ret) {
-        ESP_LOGW(TAG, "Interface error: %d", ret);
-    }
-
+    IF_X_TRUE(ret, 8, "Interface error: ", {});
     it->startReception();
-
     return ret;
 }
 
-//TODO test
-/** @brief 
+/** @brief Send packet.
+ * First search for node and it's saved interfaces and send it on one.
+ * If NODE has no known interface, send it on all intefaces.
  * 
- * @param packet Packet to handle
- * @param queue Queue to which to send received packet
+ * @param packet Packet which is to be forwarded
+ * @param queue FreeRTOS queue handle for handling received answer by valid task/function
  */
-void handleOutgoingPacket(packet_t packet, QueueHandle_t queue = defaultResponseQueue) {
-    static const char* TAG = "HANDLE OUTGOING";
+void sendPacket(packet_t packet, QueueHandle_t queue = defaultResponseQueue) {
+    static const char* TAG = "SEND PACKET";
 
-    bool some_succ = false;
+    bool sent_succ = false;
 
-    //does node have a known interface?
-    //TODO check if node exists, then check if it has an interface
     auto search = node_map.find(packet.fields.dst_addr);
     if (search != node_map.end()) {
+        //send data on first NDOE interface
         uint8_t ret = sendDataOnInterface(search->second.interfaces[0], packet.raw, packet.fields.data_len + TM_HEADER_LENGTH);
         if (ret) {
             ESP_LOGI(TAG, "Failed to send packet on interface %d: %d", search->second.interfaces[0]->getType(), ret);
             return;
         }
+        sent_succ = true;
     }
     //unknown interface
     else {
@@ -860,27 +856,25 @@ void handleOutgoingPacket(packet_t packet, QueueHandle_t queue = defaultResponse
             uint8_t ret = sendDataOnInterface(interfaces[i], packet.raw, packet.fields.data_len + TM_HEADER_LENGTH);
             if (ret) {
                 ESP_LOGI(TAG, "Failed to send packet on interface %d: %d", interfaces[i]->getType(), ret);
-                ret = 0;
                 continue;
             }
-            some_succ = true;
+            sent_succ = true;
         }
     }
 
-    if (!some_succ)
+    if (!sent_succ)
         return;
 
     ESP_LOGI(TAG, "Packet sent succesfully");
 
     //save transaction
-    transaction_t transcation = {
-        .packet = packet,
-        .time_to_stale = micros() + 2 * 1000 * 1000,
-        .request_queue = queue
-    };
-    transactions.push_back(transcation);
+    //transaction_t transcation = {
+    //    .packet = packet,
+    //    .time_to_stale = millis() + 2 * 1000,
+    //    .request_queue = queue
+    //};
+    //transactions.push_back(transcation);
 }
-
 
 /*//TODO routes
 node A says that it provides data on some port X (port anouncement)
@@ -890,12 +884,23 @@ user can manully route it
     gateway will send route solicitation to node A with address and port of node B
 
 */
-node_info_t updateNode(uint8_t address, uint8_t port, uint8_t port_dir, uint8_t node_type = 0, interfaceWrapper *interface = nullptr) {
+
+/** @brief Update NODE. If node with specified address does not exist, it creates new node with specified information
+ * 
+ * 
+ * @param address 
+ * @param port 
+ * @param port_dir 
+ * @param node_type 
+ * @param  
+ * @return 
+ */
+/*node_info_t updateNode(uint8_t address, uint8_t port, uint8_t port_dir, uint8_t node_type = 0, interfaceWrapper *interface = nullptr) {
     node_info_t node;
     
     auto search = node_map.find(address);
 
-    //create node
+    //node not found -> create node
     if (search == node_map.end()) {
         node.name = "";
         node.address = address;
@@ -918,15 +923,15 @@ node_info_t updateNode(uint8_t address, uint8_t port, uint8_t port_dir, uint8_t 
         bool new_port = true;
         for (int i = 0; i < node.ports.size(); i++) {
             if (node.ports[i].port == port) {
-                new_port = false;
                 node.ports[i].type |= port_dir;
+                new_port = false;
                 break;
             }
         }
         if (new_port)
             node.ports.push_back({port, port_dir});
 
-        //exit now if there is no new interface is to be added
+        //exit now if there is no new interface to add
         if (interface == nullptr) {
             node_map[address] = node;
             return node;
@@ -948,47 +953,225 @@ node_info_t updateNode(uint8_t address, uint8_t port, uint8_t port_dir, uint8_t 
 
     node_map[address] = node;
     return node;
+}*/
+
+
+/*node_info_t updateNode(uint8_t address, uint8_t node_type, interfaceWrapper *interface) {
+    node_info_t node;
+    
+    auto search = node_map.find(address);
+
+    //node not found -> create node
+    if (search == node_map.end()) {
+        node.name = "";
+        node.address = address;
+        node.node_type = node_type;
+        node.ports.push_back({port, port_dir});
+        if (interface == nullptr)
+            node.interface_cnt = 0;
+        else {
+            node.interfaces[0] = interface;
+            node.interface_cnt = 1;
+        }
+    }
+    else {
+        node = search->second;
+        //update node type
+        if (node_type)
+            node.node_type = node_type;
+        
+        //check if new port is to be added
+        bool new_port = true;
+        for (int i = 0; i < node.ports.size(); i++) {
+            if (node.ports[i].port == port) {
+                node.ports[i].type |= port_dir;
+                new_port = false;
+                break;
+            }
+        }
+        if (new_port)
+            node.ports.push_back({port, port_dir});
+
+        //exit now if there is no new interface to add
+        if (interface == nullptr) {
+            node_map[address] = node;
+            return node;
+        }
+
+        //check and add new interface
+        bool new_if = true;
+        for (int i = 0; i < node.interface_cnt; i++) {
+            if (node.interfaces[i] == interface) {
+                new_if = false;
+                break;
+            }
+        }
+        if (new_if) {
+            node.interfaces[node.interface_cnt] = interface;
+            node.interface_cnt++;
+        }
+    }
+
+    node_map[address] = node;
+    return node;
+}*/
+
+
+
+/** @brief 
+ * 
+ * @param packet 
+ * @param  
+ */
+void forwardPacket(packet_t packet, interfaceWrapper *interface) {
+    //update source
+    //updateNode(packet.fields.src_addr, packet.fields.port, TM_PORT_OUT, packet.fields.node_type, interface);
+    sendPacket(packet);
+}
+
+
+/** @brief Find request for the answer and add packet to it's handler queue.
+ * 
+ * @param packet Packet to send to handler
+ */
+void handleAnswer(packet_t packet, interfaceWrapper *interface) {
+    static const char* TAG = "HANDLE ANSWER";
+
+    //auto node = updateNode(packet.fields.src_addr, packet.fields.port, TM_PORT_OUT, packet.fields.node_type, interface);
+
+    //go through transactions, find corresponding one, save packet to queue, remove transaction (completed)
+    uint32_t packet_id = tm.createPacketID(tm.getMessageId(packet) - 1, packet.fields.dst_addr, packet.fields.src_addr);
+    auto search = request_packet_qs.find(packet_id);
+    if (search == request_packet_qs.end()) {
+        ESP_LOGW(TAG, "No answer handler found, this should not happend");
+        return;
+    }
+
+    //send packet to corresponding task waiting in queue
+    xQueueSendToBack(request_packet_qs[packet_id], &packet, portMAX_DELAY);
+    
+    //remove map entry
+    request_packet_qs.erase(packet_id);
+}
+
+/** @brief Create answer to request 
+ * 
+ * @param packet 
+ * @param  
+ */
+void handleRequest(packet_t packet, interfaceWrapper *interface) {
+    //TODO if custom, save trnasaction and handler
+    static const char* TAG = "CREATE ANSWER";
+
+    //auto node = updateNode(packet.fields.src_addr, packet.fields.port, TM_PORT_OUT, packet.fields.node_type, interface);
+    switch (packet.fields.msg_type) {
+        case TM_MSG_PING: {
+            ESP_LOGI(TAG, "Sending response to ping");
+            auto ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_OK);
+            IF_X_TRUE(ret, 16, "Failed to create response: ", break);
+            sendPacket(packet);
+            break;
+        }
+        case TM_MSG_REGISTER: {
+            ESP_LOGI(TAG, "Sending response to register");
+            auto ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_OK, 0, &node_id, 1);
+            IF_X_TRUE(ret, 16, "Failed to create response: ", break);
+            sendPacket(packet);
+            node_id++;
+            break;
+        }
+        case TM_MSG_PORT_ADVERT: {
+            ESP_LOGI(TAG, "Sending response to port advertisement");
+            ESP_LOGW(TAG, "Port advertisement handling not implemented");
+            uint8_t data = TM_SERVICE_NOT_IMPLEMENTED;
+            auto ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_ERR, 0, &data, 1);
+            IF_X_TRUE(ret, 16, "Failed to create response: ", break);
+            sendPacket(packet);
+            break;
+        }
+        case TM_MSG_ROUTE_SOLICIT: {
+            ESP_LOGE(TAG, "SOLICIT NOT HANDLED");
+            uint8_t data = TM_SERVICE_NOT_IMPLEMENTED;
+            auto ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_ERR, 0, &data, 1);
+            IF_X_TRUE(ret, 16, "Failed to create response: ", break);
+            sendPacket(packet);
+            break;
+        }
+        case TM_MSG_ROUTE_ANOUNC: {
+            ESP_LOGI(TAG, "Sending response to route anouncement");
+            ESP_LOGW(TAG, "Route anouncement handling to implemented");
+            uint8_t data = TM_SERVICE_NOT_IMPLEMENTED;
+            auto ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_ERR, 0, &data, 1);
+            IF_X_TRUE(ret, 16, "Failed to create response: ", break);
+            sendPacket(packet);
+            break;
+        }
+        case TM_MSG_RESET: {
+            ESP_LOGE(TAG, "RESET NOT HANDLED");
+            uint8_t data = TM_SERVICE_NOT_IMPLEMENTED;
+            auto ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_ERR, 0, &data, 1);
+            IF_X_TRUE(ret, 16, "Failed to create response: ", break);
+            sendPacket(packet);
+            break;
+        }
+        case TM_MSG_STATUS: {
+            ESP_LOGI(TAG, "Sending response to status");
+            ESP_LOGW(TAG, "Status handling not implemented");
+            uint8_t data = TM_SERVICE_NOT_IMPLEMENTED;
+            auto ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_ERR, 0, &data, 1);
+            IF_X_TRUE(ret, 16, "Failed to create response: ", break);
+            sendPacket(packet);
+            break;
+        }
+        case TM_MSG_COMBINED: {
+            ESP_LOGI(TAG, "Sending response to combined");
+            ESP_LOGW(TAG, "Combined handling not implemented");
+            uint8_t data = TM_SERVICE_NOT_IMPLEMENTED;
+            auto ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_ERR, 0, &data, 1);
+            IF_X_TRUE(ret, 16, "Failed to create response: ", break);
+            sendPacket(packet);
+            break;
+        }
+        case TM_MSG_CUSTOM: {
+            ESP_LOGI(TAG, "Sending response to custom");
+            //handleCustomPacket(packet);
+            ESP_LOGW(TAG, "Custom handling not implemented");
+            uint8_t data = TM_SERVICE_NOT_IMPLEMENTED;
+            auto ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_ERR, 0, &data, 1);
+            IF_X_TRUE(ret, 16, "Failed to create response: ", break);
+            sendPacket(packet);
+            break;
+        }
+        default:
+            ESP_LOGI(TAG, "Got unhandled message type %d", packet.fields.msg_type);
+            ESP_LOGW(TAG, "^^^^^^^^^^^^^^^^^^^^^^^^^^^^^");
+            ESP_LOGW(TAG, "This should not have happened");
+            break;
+    }
 }
 
 
 //TODO
-uint8_t handleIncomingPacket(packet_t packet, interfaceWrapper *interface) {
+/*uint8_t handleIncomingPacket(packet_t packet, interfaceWrapper *interface) {
     static const char* TAG = "HANDLE INCOMING";
 
     ESP_LOGI(TAG, "Handling incoming packet");
 
-    uint32_t packet_id = (uint32_t)packet.fields.src_addr << 24 | (uint32_t)packet.fields.port << 16 |
-                             (uint16_t)packet.fields.msg_id_msb << 8 | packet.fields.msg_id_msb;
-
-
-    //check if packet was already forwarded
-    for (size_t i = 0; i < forward_list.size(); i++) {
-        if ((uint32_t)forward_list[i] == packet_id) {
-            ESP_LOGI(TAG, "Packet already forwarded");
-            return 0;
-        }
-    }
-
-    //save new packet id
-    //TODO stale time macro (or other variable)
-    uint32_t tts = micros() + TIME_TO_STALE * 1000;
-    forward_list.push_back((uint64_t)tts << 32 | packet_id);
-
     //update destination
-    if (packet.fields.dst_addr != 255)
-        updateNode(packet.fields.dst_addr, packet.fields.port, TM_PORT_IN);
+    //if (packet.fields.dst_addr != 255)
+    //    updateNode(packet.fields.dst_addr, packet.fields.port, TM_PORT_IN);
 
     //update source
-    if (packet.fields.src_addr != 0)
-        updateNode(packet.fields.src_addr, packet.fields.port, TM_PORT_OUT, packet.fields.node_type, interface);
+    //if (packet.fields.src_addr != 0)
+    //    updateNode(packet.fields.src_addr, packet.fields.port, TM_PORT_OUT, packet.fields.node_type, interface);
 
     //TODO do not forward register
     //packet is to be forwarded
-    if (packet.fields.dst_addr != tm.getAddress()) {
-        handleOutgoingPacket(packet);
-        if (packet.fields.dst_addr != TM_BROADCAST_ADDRESS)
-            return 0;
-    }
+    //if (packet.fields.dst_addr != tm.getAddress()) {
+    //    handleOutgoingPacket(packet);
+    //    if (packet.fields.dst_addr != TM_BROADCAST_ADDRESS)
+    //        return 0;
+    //}
 
     //TODO do not answer to broadcast messages except for register
     //packet is for us
@@ -1161,7 +1344,7 @@ uint8_t handleIncomingPacket(packet_t packet, interfaceWrapper *interface) {
         default: break;
     }
     return 0;
-}
+}*/
 
 
 
@@ -1282,7 +1465,7 @@ void pingTask(void *args) {
     }
 
     //send packet
-    handleOutgoingPacket(packet, pingQueue);
+    sendPacket(packet, pingQueue);
 
     //start timer
     auto timer = micros();
@@ -1401,77 +1584,79 @@ extern "C" void app_main() {
     lora_868.setMode(SX127X_OP_MODE_SLEEP);
     lora434_it.startReception();
 
+    tm.registerMillis(millis);
 
     xTaskNotify(led_task_handle, PTRN_ID_IDLE, eSetValueWithOverwrite);
-
-
 
     uint32_t timer = 0;
     packet_t packet;
     while(true) {
-        if (micros() - timer > 1000 * 1000) {
+        if (micros() - timer > 5000 * 1000) {
             timer = micros();
             printf("Hello world\n");
         }
 
 
         for (size_t i = 0; i < INTERFACE_COUNT; i++) {
-            if (interfaces[i] == nullptr) {
-                ESP_LOGI(TAG, "Interface is null",);
+            if (interfaces[i] == nullptr || !(interfaces[i]->hasData()))
                 continue;
+
+            ESP_LOGI(TAG, "Got data on interface %d", interfaces[i]->getType());
+
+            uint8_t buf[256] = {0};
+            uint8_t len;
+            uint16_t ret = interfaces[i]->getData(buf, &len);
+            IF_X_TRUE(ret, 8, "Interface get error: ", continue);
+
+            packet_t packet = {0};
+            ret = tm.buildPacket(&packet, buf, len);
+            IF_X_TRUE(ret, 16, "Packet error: ", continue);
+            
+            ret = tm.checkPacket(packet);
+            IF_X_TRUE(ret == TM_ERR_IN_DUPLICATE, 0, "Duplicate packet", continue);
+            IF_X_TRUE(ret == TM_ERR_IN_PORT, 0, "Invalid packet port", continue);
+            IF_X_TRUE(ret == TM_ERR_IN_TYPE, 0, "Invalid packet type", continue);
+
+            if (ret == TM_ERR_IN_FORWARD) {
+                ESP_LOGI(TAG, "Packet is to be forwarded");
+                forwardPacket(packet, interfaces[i]);
+            }
+            else if (ret == TM_IN_ANSWER) {
+                ESP_LOGI(TAG, "Packet is an answer");
+                handleAnswer(packet, interfaces[i]);
+            }
+            else if (ret == TM_IN_REQUEST) {
+                ESP_LOGI(TAG, "Packet is a request");
+                handleRequest(packet, interfaces[i]);
+            }
+            else if (ret == TM_IN_BROADCAST) {
+                ESP_LOGI(TAG, "Packet is a broadcast");
+                forwardPacket(packet, interfaces[i]);
+                handleRequest(packet, interfaces[i]);
             }
 
-            if (interfaces[i]->hasData()) {
-                ESP_LOGI(TAG, "Got data on interface %d", interfaces[i]->getType());
-                
-                uint8_t buf[256] = {0};
-                uint8_t len;
-                uint16_t ret = interfaces[i]->getData(buf, &len);
-                CHECK_RET(ret, "Interface get error: ", continue);
-
-                packet_t packet = {0};
-                ret = tm.buildPacket(&packet, buf, len);
-                CHECK_RET(ret, "Packet error: ", continue);
-                
-                ret = tm.checkPacket(packet);
-                CHECK_RET(ret & TM_ERR_IN_DUPLICATE, "Duplicate packet: ", continue);
-                CHECK_RET(ret & TM_ERR_IN_PORT, "Invalid packet port: ", continue);
-                CHECK_RET(ret & TM_ERR_IN_TYPE, "Invalid packet type: ", continue);
-
-                if (ret & TM_ERR_IN_FORWARD) {
-                    ESP_LOGI(TAG, "Packet is to be forwarded");
-                    //TODO forward
-                    //TODO save
-                }
-                else if (ret & TM_IN_ANSWER) {
-                    ESP_LOGI(TAG, "Packet is an answer");
-                    //TODO handle
-                    //TODO save
-                }
-                else if (ret & TM_IN_REQUEST) {
-                    ESP_LOGI(TAG, "Packet is a request");
-                    //TODO handle
-                    //TODO save
-                }
-
-                ret = tm.savePacket(packet);
-                CHECK_RET(ret, "Failed to save packet: ", continue);
-            }
+            //TODO save packet outside of tm for responses
+            ret = tm.savePacket(packet);
+            IF_X_TRUE(ret, 8, "Failed to save packet: ", continue);
         }
+
+        ret = tm.clearSavedPackets();
+        if (ret)
+            ESP_LOGI(TAG, "Removed %d stale packets", ret);
 
         //TODO check if access to transactions is thread safe
         //lazy stale transaction removing
-        if (transactions.size() > 0 && transactions[0].time_to_stale < micros()) {
-            transactions.pop_front();
-            ESP_LOGI(TAG, "Removed stale transaction");
-        }
+        //if (transactions.size() > 0 && transactions[0].time_to_stale < micros()) {
+        //    transactions.pop_front();
+        //    ESP_LOGI(TAG, "Removed stale transaction");
+        //}
 
         //TODO check if access to forward list is thread safe
         //lazy forward list removing
-        if (forward_list.size() > 0 && (forward_list[0] >> 32) < micros()) {
-            forward_list.pop_front();
-            ESP_LOGI(TAG, "Removed stale forward record");
-        }
+        //if (forward_list.size() > 0 && (forward_list[0] >> 32) < micros()) {
+        //    forward_list.pop_front();
+        //    ESP_LOGI(TAG, "Removed stale forward record");
+        //}
 
 
         vTaskDelay(pdMS_TO_TICKS(1));
