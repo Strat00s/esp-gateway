@@ -12,7 +12,7 @@
 #define IW_TYPE_NRF24     6
 #define IW_TYPE_RF_443    7
 #define IW_TYPE_ESP_NOW   8
-#define IW_TYPE_ERR       8
+#define IW_TYPE_ERR       9 //Anything equal or above this value is unknown interface
 
 
 class interfaceWrapper {
