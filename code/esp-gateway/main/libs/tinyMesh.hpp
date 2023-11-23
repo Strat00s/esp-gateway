@@ -282,13 +282,13 @@ Only custom messages are allowed to have flow of any size (continuous request, r
 #define TM_DEFAULT_PORT      0
 
 #ifndef TM_TIME_TO_STALE
-#define TM_TIME_TO_STALE     5000 //time in ms for a saved packet to become stale
+#define TM_TIME_TO_STALE     3000 //time in ms for a saved packet to become stale
 #endif
 #ifndef TM_PORT_COUNT
 #define TM_PORT_COUNT        2
 #endif
 #ifndef TM_SENT_Q_SIZE
-#define TM_SENT_Q_SIZE       10 //this array is of type uint64_t, so it takes a lot of space!
+#define TM_SENT_Q_SIZE       3 //this array is of type uint64_t, so it takes a lot of space!
 #endif
 
 
@@ -346,7 +346,7 @@ public:
      * @param node_type Node type
      * @param seed Starting seed for LCG
      */
-    TinyMesh(uint8_t node_type, uint16_t seed = 42069);
+    TinyMesh(uint8_t node_type);
 
     /** @brief Create TinyMesh instance.
      * The class containes a simple LCG for pseudo random message ID generation where the seed is used.
@@ -354,7 +354,7 @@ public:
      * @param node_type Node type
      * @param seed Starting seed for LCG
      */
-    TinyMesh(uint8_t address, uint8_t node_type, uint16_t seed = 42069);
+    TinyMesh(uint8_t address, uint8_t node_type);
 
     /** @brief Create TinyMesh instance.
      * The class containes a simple LCG for pseudo random message ID generation where the seed is used.
@@ -363,8 +363,11 @@ public:
      * @param node_type Node type
      * @param seed Starting seed for LCG
      */
-    TinyMesh(uint8_t version, uint8_t address, uint8_t node_type, uint16_t seed = 42069);
+    TinyMesh(uint8_t version, uint8_t address, uint8_t node_type);
     ~TinyMesh();
+
+
+    void setSeed(uint16_t seed = 42069);
 
     /** @brief Register time keeping function for creating timestamps for packets.
      * It is expected that this function returns time in milliseconds between individual calls of this function.

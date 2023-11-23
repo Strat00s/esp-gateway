@@ -2,16 +2,16 @@
 #include <string.h>
 
 
-TinyMesh::TinyMesh(uint8_t node_type, uint16_t seed) {
+TinyMesh::TinyMesh(uint8_t node_type) {
     setDeviceType(node_type);
     addPort(0, TM_PORT_INOUT);
 }
 
-TinyMesh::TinyMesh(uint8_t address, uint8_t node_type, uint16_t seed) : TinyMesh(node_type, seed) {
+TinyMesh::TinyMesh(uint8_t address, uint8_t node_type) : TinyMesh(node_type) {
     setAddress(address);
 }
 
-TinyMesh::TinyMesh(uint8_t version, uint8_t address, uint8_t node_type, uint16_t seed) : TinyMesh(address, node_type, seed) {
+TinyMesh::TinyMesh(uint8_t version, uint8_t address, uint8_t node_type) : TinyMesh(address, node_type) {
     setVersion(version);
 }
 
@@ -19,6 +19,10 @@ TinyMesh::~TinyMesh() {
 
 }
 
+
+void TinyMesh::setSeed(uint16_t seed) {
+    lcg(seed);
+}
 
 void TinyMesh::registerMillis(uint32_t (*millis)()) {
     this->millis = millis;
@@ -100,20 +104,20 @@ uint16_t TinyMesh::buildPacket(packet_t *packet, uint8_t *buffer, uint8_t length
         //input buffer length more than packet data length
         if (length - TM_HEADER_LENGTH > packet->fields.data_len) {
             ret |= TM_ERR_TRUNCATED;
-            memcpy(packet->fields.data, buffer, packet->fields.data_len);
+            memcpy(packet->fields.data, buffer + TM_HEADER_LENGTH, packet->fields.data_len);
         }
         //input buffer length less than packet data length
         if (length - TM_HEADER_LENGTH < packet->fields.data_len) {
             ret |= TM_ERR_DATA_LEN;
-            memcpy(packet->fields.data, buffer, length - TM_HEADER_LENGTH);
+            memcpy(packet->fields.data, buffer + TM_HEADER_LENGTH, length - TM_HEADER_LENGTH);
         }
         else
-            memcpy(packet->fields.data, buffer, packet->fields.data_len);
+            memcpy(packet->fields.data, buffer + TM_HEADER_LENGTH, packet->fields.data_len);
     }
     //data length > max data length -> truncate
     else {
         ret |= TM_ERR_TRUNCATED;
-        memcpy(packet->fields.data, buffer, TM_DATA_LENGTH);
+        memcpy(packet->fields.data, buffer + TM_HEADER_LENGTH, TM_DATA_LENGTH);
     }
 
     return ret;
@@ -292,9 +296,7 @@ uint8_t TinyMesh::checkPacket(packet_t packet) {
     }
 
     //packet is a broadcast
-    if (packet.fields.dst_addr != TM_BROADCAST_ADDRESS) {
-        if (packet.fields.msg_type != TM_MSG_OK && packet.fields.msg_type != TM_MSG_ERR && packet.fields.msg_type != TM_MSG_CUSTOM)
-            return TM_ERR_IN_TYPE;
+    if (packet.fields.dst_addr == TM_BROADCAST_ADDRESS) {
         if (packet.fields.port != 0)
             return TM_ERR_IN_PORT;
         return TM_IN_BROADCAST;
@@ -348,7 +350,7 @@ uint16_t TinyMesh::lcg(uint16_t seed) {
     static uint16_t x = seed;
     uint16_t a = 25214903917 & 0xFFFF;
     uint16_t c = 11;
-    x = (a * x + c) % (0xFFFF + 1);
+    x = (a * x + c) % 0xFFFF;
     return x;
 }
 
