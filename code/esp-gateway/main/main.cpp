@@ -341,9 +341,10 @@ void printBinary(uint32_t num, uint8_t len) {
 void printPacket(packet_t packet) {
     printf("Version:             %d\n", packet.fields.version);
     printf("Device type:         %d\n", packet.fields.node_type);
-    printf("Message id:          %d\n", (((uint16_t)packet.fields.msg_id_msb) << 8) | ((uint16_t)packet.fields.msg_id_lsb));
+    printf("Message id:          %d\n", tm.getMessageId(packet));
     printf("Source address:      %d\n", packet.fields.src_addr);
     printf("Destination address: %d\n", packet.fields.dst_addr);
+    printf("Port:                %d\n", packet.fields.port);
     printf("Message type:        %d\n", packet.fields.msg_type);
     printf("Data length:         %d\n", packet.fields.data_len);
     printf("Data: ");
@@ -837,6 +838,9 @@ uint8_t sendDataOnInterface(interfaceWrapper *it, uint8_t *data, uint8_t len) {
  */
 void sendPacket(packet_t packet, QueueHandle_t queue = defaultResponseQueue) {
     static const char* TAG = "SEND PACKET";
+    vTaskDelay(pdMS_TO_TICKS(1000));
+
+    printPacket(packet);
 
     bool sent_succ = false;
 
@@ -1073,7 +1077,7 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
             break;
         }
         case TM_MSG_REGISTER: {
-            ESP_LOGI(TAG, "Sending response to register");
+            ESP_LOGI(TAG, "Sending response to register: %d", node_id);
             auto ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_OK, 0, &node_id, 1);
             IF_X_TRUE(ret, 16, "Failed to create response: ", break);
             sendPacket(packet);
@@ -1584,6 +1588,9 @@ extern "C" void app_main() {
     lora_868.setMode(SX127X_OP_MODE_SLEEP);
     lora434_it.startReception();
 
+    //TinyMesh configuration
+    tm.setSeed();
+    tm.setAddress(1);
     tm.registerMillis(millis);
 
     xTaskNotify(led_task_handle, PTRN_ID_IDLE, eSetValueWithOverwrite);
@@ -1611,7 +1618,9 @@ extern "C" void app_main() {
             packet_t packet = {0};
             ret = tm.buildPacket(&packet, buf, len);
             IF_X_TRUE(ret, 16, "Packet error: ", continue);
-            
+
+            printPacket(packet);
+
             ret = tm.checkPacket(packet);
             IF_X_TRUE(ret == TM_ERR_IN_DUPLICATE, 0, "Duplicate packet", continue);
             IF_X_TRUE(ret == TM_ERR_IN_PORT, 0, "Invalid packet port", continue);
