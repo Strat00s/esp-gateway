@@ -251,7 +251,7 @@ typedef struct {
     uint8_t address;
     uint8_t node_type;
     std::deque<port_cfg_t> ports;
-    std::deque<route_info_t> routes;    //static routes derived from packets
+    //std::deque<route_info_t> routes;    //static routes derived from packets
     interfaceWrapper *interfaces[INTERFACE_COUNT];
     uint8_t interface_cnt;
 } node_info_t;
@@ -1067,6 +1067,22 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
     //TODO if custom, save trnasaction and handler
     static const char* TAG = "CREATE ANSWER";
 
+    //save new node
+    if (packet.fields.src_addr != TM_DEFAULT_ADDRESS && packet.fields.src_addr != TM_BROADCAST_ADDRESS) {
+        auto search = node_map.find(packet.fields.src_addr);
+        if (search == node_map.end()) {
+            node_info_t node;
+            node.name = "node " + std::to_string(packet.fields.src_addr);
+            node.address = packet.fields.src_addr;
+            node.interfaces[0] = interface;
+            node.interface_cnt = 1;
+            node.node_type = packet.fields.node_type;
+            node.ports.push_back({0, TM_PORT_INOUT | TM_PORT_DATA_CUSTOM});
+            node_map[packet.fields.src_addr] = node;
+            ESP_LOGI(TAG, "New node created: %s", node.name.c_str());
+        }
+    }
+
     uint16_t message_id = tm.getMessageId(packet) + 1;
 
     //auto node = updateNode(packet.fields.src_addr, packet.fields.port, TM_PORT_OUT, packet.fields.node_type, interface);
@@ -1079,11 +1095,30 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
             break;
         }
         case TM_MSG_REGISTER: {
-            ESP_LOGI(TAG, "Sending response to register: %d", node_id);
-            auto ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_OK, message_id, 0, &node_id, 1);
+            ESP_LOGI(TAG, "Sending response to register");
+            
+            //find new empty address
+            uint8_t new_address = 0;
+            for (uint8_t i = 1; i < 255; i++) {
+                if (i == tm.getAddress())
+                    continue;
+                if (node_map.find(i) == node_map.end()) {
+                    new_address = i;
+                    break;
+                }
+            }
+            
+            //no empty address
+            uint16_t ret = 0;
+            if (!new_address) {
+                uint8_t buf = TM_ERR_ADDRESS_LIMIT;
+                ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_ERR, message_id, 0, &buf, 1);
+            }
+            else
+                ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_OK, message_id, 0, &new_address, 1);
+
             IF_X_TRUE(ret, 16, "Failed to create response: ", break);
             sendPacket(packet);
-            node_id++;
             break;
         }
         case TM_MSG_PORT_ADVERT: {
@@ -1397,6 +1432,16 @@ extern "C" void app_main() {
     tm.setSeed();
     tm.setAddress(1);
     tm.registerMillis(millis);
+
+    //create this node in node map
+    node_info_t node;
+    node.name = "The Gateway";
+    node.address = tm.getAddress();
+    memcpy(node.interfaces, interfaces, INTERFACE_COUNT);
+    node.interface_cnt = INTERFACE_COUNT;
+    node.node_type = tm.getDeviceType();
+    node.ports.push_back({0, TM_PORT_INOUT | TM_PORT_DATA_CUSTOM});
+
 
     xTaskNotify(led_task_handle, PTRN_ID_IDLE, eSetValueWithOverwrite);
     printf("----------------------------------------------------------------------------------------\n");
