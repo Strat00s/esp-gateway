@@ -5,9 +5,10 @@
 
 #define IW_TYPE_NONE      0
 #define IW_TYPE_MQTT      1
-#define IW_TYPE_LORA_137M 2
-#define IW_TYPE_LORA_434M 3
-#define IW_TYPE_LORA_868M 4
+#define IW_TYPE_SX127X    2
+//#define IW_TYPE_LORA_137M 2
+//#define IW_TYPE_LORA_434M 3
+//#define IW_TYPE_LORA_868M 4
 #define IW_TYPE_LORA_2_4G 5
 #define IW_TYPE_NRF24     6
 #define IW_TYPE_RF_443    7
