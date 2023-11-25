@@ -5,7 +5,7 @@
 
 TinyMesh::TinyMesh(uint8_t node_type) {
     setDeviceType(node_type);
-    addPort(0, TM_PORT_INOUT);
+    addPort(0, TM_PORT_INOUT | TM_PORT_DATA_CUSTOM);
 }
 
 TinyMesh::TinyMesh(uint8_t address, uint8_t node_type) : TinyMesh(node_type) {

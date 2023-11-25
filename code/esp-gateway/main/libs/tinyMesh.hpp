@@ -215,6 +215,7 @@ Only custom messages are allowed to have flow of any size (continuous request, r
 
 //TM_ERR_MESSAGES 
 #define TM_SERVICE_NOT_IMPLEMENTED 1
+#define TM_ERR_ADDRESS_LIMIT       2
 
 //#define TM_ERR_CFG_ADDRESS      0b0010000000000000
 
