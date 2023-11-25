@@ -51,7 +51,7 @@
 #include "libs/simpleContainer.hpp"
 #include "libs/tinyMesh.hpp"
 #include "libs/interfaces/interfaceWrapper.hpp"
-#include "libs/interfaces/lora434InterfaceWrapper.hpp"
+#include "libs/interfaces/sx127xInterfaceWrapper.hpp"
 #include "libs/containers/threadsafeDeque.hpp"
 #include "wifi_cfg.h"
 
@@ -152,8 +152,8 @@
 
 
 //Networking
-#define INTERFACE_COUNT 1 //number of implemented and usable interfaces
-#define TIME_TO_STALE   2000 //time (ms) for a record to become stale (when forwarding or when waiting for a response)
+#define INTERFACE_COUNT 2 //number of implemented and usable interfaces
+#define TIME_TO_STALE   TM_TIME_TO_STALE //time (ms) for a record to become stale (when forwarding or when waiting for a response)
 
 
 //blink pattern ids
@@ -174,8 +174,9 @@ esp_netif_ip_info_t ip_info;
 TinyMesh tm(TM_TYPE_GATEWAY);
 
 //interface instances
-lora434InterfaceWrapper lora434_it(&lora_434);
-interfaceWrapper *interfaces[INTERFACE_COUNT] = {&lora434_it};
+sx127xInterfaceWrapper lora434_it(&lora_434);
+sx127xInterfaceWrapper lora868_it(&lora_868);
+interfaceWrapper *interfaces[INTERFACE_COUNT] = {&lora434_it, &lora868_it};
 
 
 /*----(Data structures)----*/
@@ -250,7 +251,8 @@ typedef struct {
     std::string name = "";
     uint8_t address;
     uint8_t node_type;
-    std::deque<port_cfg_t> ports;
+    //std::deque<port_cfg_t> ports;
+    std::map<uint8_t, uint8_t> ports;
     //std::deque<route_info_t> routes;    //static routes derived from packets
     interfaceWrapper *interfaces[INTERFACE_COUNT];
     uint8_t interface_cnt;
@@ -838,8 +840,9 @@ uint8_t sendDataOnInterface(interfaceWrapper *it, uint8_t *data, uint8_t len) {
  */
 void sendPacket(packet_t packet, QueueHandle_t queue = defaultResponseQueue) {
     static const char* TAG = "SEND PACKET";
-    vTaskDelay(pdMS_TO_TICKS(50));
+    //vTaskDelay(pdMS_TO_TICKS(50));
 
+    ESP_LOGI(TAG, "Sending packet:");
     printPacket(packet);
 
     bool sent_succ = false;
@@ -1077,7 +1080,7 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
             node.interfaces[0] = interface;
             node.interface_cnt = 1;
             node.node_type = packet.fields.node_type;
-            node.ports.push_back({0, TM_PORT_INOUT | TM_PORT_DATA_CUSTOM});
+            node.ports[0] = TM_PORT_INOUT | TM_PORT_DATA_CUSTOM;
             node_map[packet.fields.src_addr] = node;
             ESP_LOGI(TAG, "New node created: %s", node.name.c_str());
         }
@@ -1086,10 +1089,11 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
     uint16_t message_id = tm.getMessageId(packet) + 1;
 
     //auto node = updateNode(packet.fields.src_addr, packet.fields.port, TM_PORT_OUT, packet.fields.node_type, interface);
+    uint16_t ret;
     switch (packet.fields.msg_type) {
         case TM_MSG_PING: {
             ESP_LOGI(TAG, "Sending response to ping");
-            auto ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_OK, message_id, 0, nullptr, 0);
+            ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_OK, message_id, 0, nullptr, 0);
             IF_X_TRUE(ret, 16, "Failed to create response: ", break);
             sendPacket(packet);
             break;
@@ -1121,28 +1125,30 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
             sendPacket(packet);
             break;
         }
-        case TM_MSG_PORT_ADVERT: {
-            ESP_LOGI(TAG, "Sending response to port advertisement");
-            ESP_LOGW(TAG, "Port advertisement handling not implemented");
-            uint8_t data = TM_SERVICE_NOT_IMPLEMENTED;
-            auto ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_ERR, message_id, 0, &data, 1);
+        case TM_MSG_PORT_ANOUNCEMENT: {
+            ESP_LOGI(TAG, "Sending response to port anouncement");
+
+            auto search = node_map.find(packet.fields.src_addr);
+            if (search == node_map.end()) {
+                ESP_LOGE(TAG, "Node not found!");
+                uint8_t buf = TM_ERR_UNKNOWN_NODE;
+                ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_ERR, message_id, 0, &buf, 1);
+            }
+            else {
+                auto node = search->second;
+                for (uint8_t i = 0; i < packet.fields.data_len; i = i + 2)
+                    node.ports[packet.fields.data[i]] = packet.fields.data[i + 1];
+                ESP_LOGI(TAG, "Port(s) saved");
+                ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_OK, message_id);
+            }
             IF_X_TRUE(ret, 16, "Failed to create response: ", break);
             sendPacket(packet);
             break;
         }
-        case TM_MSG_ROUTE_SOLICIT: {
+        case TM_MSG_ROUTE_ANOUNCEMENT: {
             ESP_LOGE(TAG, "SOLICIT NOT HANDLED");
             uint8_t data = TM_SERVICE_NOT_IMPLEMENTED;
-            auto ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_ERR, message_id, 0, &data, 1);
-            IF_X_TRUE(ret, 16, "Failed to create response: ", break);
-            sendPacket(packet);
-            break;
-        }
-        case TM_MSG_ROUTE_ANOUNC: {
-            ESP_LOGI(TAG, "Sending response to route anouncement");
-            ESP_LOGW(TAG, "Route anouncement handling to implemented");
-            uint8_t data = TM_SERVICE_NOT_IMPLEMENTED;
-            auto ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_ERR, message_id, 0, &data, 1);
+            ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_ERR, message_id, 0, &data, 1);
             IF_X_TRUE(ret, 16, "Failed to create response: ", break);
             sendPacket(packet);
             break;
@@ -1150,7 +1156,7 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
         case TM_MSG_RESET: {
             ESP_LOGE(TAG, "RESET NOT HANDLED");
             uint8_t data = TM_SERVICE_NOT_IMPLEMENTED;
-            auto ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_ERR, message_id, 0, &data, 1);
+            ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_ERR, message_id, 0, &data, 1);
             IF_X_TRUE(ret, 16, "Failed to create response: ", break);
             sendPacket(packet);
             break;
@@ -1159,7 +1165,7 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
             ESP_LOGI(TAG, "Sending response to status");
             ESP_LOGW(TAG, "Status handling not implemented");
             uint8_t data = TM_SERVICE_NOT_IMPLEMENTED;
-            auto ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_ERR, message_id, 0, &data, 1);
+            ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_ERR, message_id, 0, &data, 1);
             IF_X_TRUE(ret, 16, "Failed to create response: ", break);
             sendPacket(packet);
             break;
@@ -1168,7 +1174,7 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
             ESP_LOGI(TAG, "Sending response to combined");
             ESP_LOGW(TAG, "Combined handling not implemented");
             uint8_t data = TM_SERVICE_NOT_IMPLEMENTED;
-            auto ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_ERR, message_id, 0, &data, 1);
+            ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_ERR, message_id, 0, &data, 1);
             IF_X_TRUE(ret, 16, "Failed to create response: ", break);
             sendPacket(packet);
             break;
@@ -1178,7 +1184,7 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
             //handleCustomPacket(packet);
             ESP_LOGW(TAG, "Custom handling not implemented");
             uint8_t data = TM_SERVICE_NOT_IMPLEMENTED;
-            auto ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_ERR, message_id, 0, &data, 1);
+            ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_ERR, message_id, 0, &data, 1);
             IF_X_TRUE(ret, 16, "Failed to create response: ", break);
             sendPacket(packet);
             break;
@@ -1288,12 +1294,13 @@ void mqttTask(void *args) {
     }
 }
 
-//TODO test
+//TODO implement and test
 /** @brief Ping task created when user request ping of some device over mqtt
  * 
  * 
  * @param args destination address
  */
+/*
 void pingTask(void *args) {
     static const char* TAG = "PING TASK";
     ESP_LOGI(TAG, "Ping task created\n");
@@ -1315,7 +1322,7 @@ void pingTask(void *args) {
     auto timer = micros();
     
     //wait for response
-    auto q_ret = xQueueReceive(defaultResponseQueue, &packet, pdMS_TO_TICKS(2000));
+    auto q_ret = xQueueReceive(pingQueue, &packet, portMAX_DELAY);
     
     //timeout
     if (q_ret == pdFALSE) {
@@ -1330,7 +1337,7 @@ void pingTask(void *args) {
     //TODO log data to mqtt
 
     vTaskDelete(NULL);
-}
+}*/
 
 //TODO test
 void defaultResponseTask(void *args) {
@@ -1413,7 +1420,7 @@ extern "C" void app_main() {
 
     //configure installed interface modules
     configureLora(&lora_434, 434.0, 0x12, 8, LORA_BANDWIDTH_125kHz, LORA_SPREADING_FACTOR_9, LORA_CODING_RATE_4_7);
-    configureLora(&lora_868, 868.0, 0x12, 8, LORA_BANDWIDTH_125kHz, LORA_SPREADING_FACTOR_9, LORA_CODING_RATE_4_7);
+    configureLora(&lora_868, 868.0, 0x24, 8, LORA_BANDWIDTH_125kHz, LORA_SPREADING_FACTOR_9, LORA_CODING_RATE_4_7);
 
 
     uint8_t freq[3] = {0};
@@ -1425,7 +1432,8 @@ extern "C" void app_main() {
 
 
     //configure radios
-    lora_868.setMode(SX127X_OP_MODE_SLEEP);
+    //lora_868.setMode(SX127X_OP_MODE_SLEEP);
+    lora868_it.startReception();
     lora434_it.startReception();
 
     //TinyMesh configuration
@@ -1440,7 +1448,7 @@ extern "C" void app_main() {
     memcpy(node.interfaces, interfaces, INTERFACE_COUNT);
     node.interface_cnt = INTERFACE_COUNT;
     node.node_type = tm.getDeviceType();
-    node.ports.push_back({0, TM_PORT_INOUT | TM_PORT_DATA_CUSTOM});
+    node.ports[0] = TM_PORT_INOUT | TM_PORT_DATA_CUSTOM;
 
 
     xTaskNotify(led_task_handle, PTRN_ID_IDLE, eSetValueWithOverwrite);
@@ -1448,10 +1456,13 @@ extern "C" void app_main() {
 
     uint32_t timer = 0;
     packet_t packet;
+    uint8_t i = 1;
     while(true) {
         //if (micros() - timer > 5000 * 1000) {
         //    timer = micros();
-        //    printf("Hello world\n");
+        //    TaskHandle_t pingTaskHandle;
+        //    xTaskCreate(pingTask, "pingTask", 4096, &i, 1, &pingTaskHandle);
+        //    i++;
         //}
 
 
@@ -1459,7 +1470,7 @@ extern "C" void app_main() {
             if (interfaces[i] == nullptr || !(interfaces[i]->hasData()))
                 continue;
 
-            ESP_LOGI(TAG, "Got data on interface %d", interfaces[i]->getType());
+            ESP_LOGI(TAG, "Got data on interface %d (%d)", interfaces[i]->getType(), i);
 
             uint8_t buf[256] = {0};
             uint8_t len;
@@ -1478,7 +1489,7 @@ extern "C" void app_main() {
             IF_X_TRUE(ret == TM_ERR_IN_PORT, 0, "Invalid packet port", continue);
             IF_X_TRUE(ret == TM_ERR_IN_TYPE, 0, "Invalid packet type", continue);
 
-            if (ret == TM_ERR_IN_FORWARD) {
+            if (ret == TM_IN_FORWARD) {
                 ESP_LOGI(TAG, "Packet is to be forwarded");
                 forwardPacket(packet, interfaces[i]);
             }
