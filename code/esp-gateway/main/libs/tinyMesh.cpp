@@ -1,11 +1,10 @@
 #include "tinyMesh.hpp"
 #include <string.h>
-#include <stdio.h>
 
 
 TinyMesh::TinyMesh(uint8_t node_type) {
     setDeviceType(node_type);
-    addPort(0, TM_PORT_INOUT | TM_PORT_DATA_CUSTOM);
+    addPort(0, TM_PORT_INOUT);
 }
 
 TinyMesh::TinyMesh(uint8_t address, uint8_t node_type) : TinyMesh(node_type) {
@@ -210,6 +209,7 @@ uint16_t TinyMesh::checkHeader(packet_t packet) {
     //message type, address and data length invalid combinations
     switch (packet.fields.msg_type) {
         case TM_MSG_REGISTER:
+            //TODO allow registration with premade address
             if (packet.fields.src_addr != 0 || packet.fields.dst_addr != 255)
                 ret |= TM_ERR_MSG_TYPE_ADDRESS;
             [[fallthrough]];
@@ -221,22 +221,6 @@ uint16_t TinyMesh::checkHeader(packet_t packet) {
 
         case TM_MSG_ERR:
             if (packet.fields.data_len != 1)
-                ret |= TM_ERR_MSG_TYPE_LEN;
-            break;
-
-        case TM_MSG_PORT_ADVERT:
-            if (packet.fields.data_len < 2 || packet.fields.data_len % 2 != 0)
-                ret |= TM_ERR_MSG_TYPE_LEN;
-            //if (packet.fields.dst_addr != this->gateway_address)
-            //    ret |= TM_ERR_MSG_TYPE_ADDRESS;
-            break;
-
-        case TM_MSG_ROUTE_ANOUNC:
-            //if (packet.fields.dst_addr != this->gateway_address)
-            //    ret |= TM_ERR_MSG_TYPE_ADDRESS;
-            //[[fallthrough]];
-        case TM_MSG_ROUTE_SOLICIT:
-            if (packet.fields.data_len < 2)
                 ret |= TM_ERR_MSG_TYPE_LEN;
             break;
         default: break;
@@ -321,7 +305,7 @@ uint8_t TinyMesh::checkPacket(packet_t packet) {
 
     //user must save this packet manually
     if (packet.fields.dst_addr != this->address) {
-        return TM_ERR_IN_FORWARD;
+        return TM_IN_FORWARD;
     }
 
     //check if packet is a response to our previous request
