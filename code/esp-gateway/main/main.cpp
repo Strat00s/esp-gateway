@@ -2,17 +2,17 @@
 //TODO Add LCD
 //TODO Fix SD
 //TODO Make subcribe and publish routines for mqtt
-//TODO 5. init loras              //lcd, sd, mqtt
-//TODO 6. init nrf24              //lcd, sd, mqtt
-//TODO 7. init esp01              //lcd, sd, mqtt
-//TODO 8. init rf434              //lcd, sd, mqtt
-//TODO routes
-//TODO access to SPI must be thread safe
 //TODO mqtt class
+
+
 //TODO store saved data somewhere
-//TODO dont update nodes automatically, wait for port anouncement and such
-//TODO node map
-//TODO routes
+
+
+//Current TODOs:
+//TODO register with predefined address
+//TODO implement no gateway behavior
+//TODO route anouncement
+//TODO mqtt routing
 
 
 #include <stdio.h>
@@ -54,7 +54,6 @@
 #include "libs/interfaces/sx127xInterfaceWrapper.hpp"
 #include "libs/containers/threadsafeDeque.hpp"
 #include "wifi_cfg.h"
-
 
 #include <stdio.h>
 #include <stdint.h>
@@ -309,6 +308,8 @@ void SPIEndTransfer() {
     spi_device_release_bus(dev_handl);
 }
 void SPITransfer(uint8_t addr, uint8_t *buffer, size_t length) {
+    static const char *TAG = "SPITransfer";
+
     spi_transaction_t t;
     memset(&t, 0, sizeof(t));
     t.length = 8;
@@ -326,7 +327,10 @@ void SPITransfer(uint8_t addr, uint8_t *buffer, size_t length) {
     else
         t.rx_buffer = buffer;
 
-    ESP_ERROR_CHECK(spi_device_polling_transmit(dev_handl, &t));
+    auto ret = spi_device_polling_transmit(dev_handl, &t);
+    if (ret)
+        ESP_LOGE(TAG, "Error: %d", ret);
+    return;
 }
 
 uint32_t millis() {
@@ -842,6 +846,8 @@ void sendPacket(packet_t packet, QueueHandle_t queue = defaultResponseQueue) {
     static const char* TAG = "SEND PACKET";
     //vTaskDelay(pdMS_TO_TICKS(50));
 
+    IF_X_TRUE(tm.savePacket(packet), 8, "Failed to save packet: ", {});
+
     ESP_LOGI(TAG, "Sending packet:");
     printPacket(packet);
 
@@ -850,6 +856,7 @@ void sendPacket(packet_t packet, QueueHandle_t queue = defaultResponseQueue) {
     auto search = node_map.find(packet.fields.dst_addr);
     if (search != node_map.end()) {
         //send data on first NDOE interface
+        ESP_LOGI(TAG, "NODE %s has known interface", search->second.name.c_str());
         uint8_t ret = sendDataOnInterface(search->second.interfaces[0], packet.raw, packet.fields.data_len + TM_HEADER_LENGTH);
         if (ret) {
             ESP_LOGI(TAG, "Failed to send packet on interface %d: %d", search->second.interfaces[0]->getType(), ret);
@@ -1100,18 +1107,20 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
         }
         case TM_MSG_REGISTER: {
             ESP_LOGI(TAG, "Sending response to register");
-            
-            //find new empty address
-            uint8_t new_address = 0;
-            for (uint8_t i = 1; i < 255; i++) {
-                if (i == tm.getAddress())
-                    continue;
-                if (node_map.find(i) == node_map.end()) {
-                    new_address = i;
-                    break;
+
+            uint8_t new_address = packet.fields.src_addr;
+            //create new address only if device has default address (0)
+            if (new_address == TM_DEFAULT_ADDRESS) {
+                for (uint8_t i = TM_DEFAULT_ADDRESS + 1; i < TM_BROADCAST_ADDRESS; i++) {
+                    if (i == tm.getAddress())
+                        continue;
+                    if (node_map.find(i) == node_map.end()) {
+                        new_address = i;
+                        break;
+                    }
                 }
             }
-            
+
             //no empty address
             uint16_t ret = 0;
             if (!new_address) {
@@ -1458,14 +1467,6 @@ extern "C" void app_main() {
     packet_t packet;
     uint8_t i = 1;
     while(true) {
-        //if (micros() - timer > 5000 * 1000) {
-        //    timer = micros();
-        //    TaskHandle_t pingTaskHandle;
-        //    xTaskCreate(pingTask, "pingTask", 4096, &i, 1, &pingTaskHandle);
-        //    i++;
-        //}
-
-
         for (size_t i = 0; i < INTERFACE_COUNT; i++) {
             if (interfaces[i] == nullptr || !(interfaces[i]->hasData()))
                 continue;
@@ -1475,20 +1476,20 @@ extern "C" void app_main() {
             uint8_t buf[256] = {0};
             uint8_t len;
             uint16_t ret = interfaces[i]->getData(buf, &len);
-            IF_X_TRUE(ret, 8, "Interface get error: ", continue);
+            IF_X_TRUE(ret, 8, "Interface getData error: ", continue);
 
-            packet_t packet = {0};
             ret = tm.buildPacket(&packet, buf, len);
-            //printPacket(packet);
             IF_X_TRUE(ret, 16, "Packet error: ", continue);
-
-            //printPacket(packet);
 
             ret = tm.checkPacket(packet);
             IF_X_TRUE(ret == TM_ERR_IN_DUPLICATE, 0, "Duplicate packet", continue);
             IF_X_TRUE(ret == TM_ERR_IN_PORT, 0, "Invalid packet port", continue);
             IF_X_TRUE(ret == TM_ERR_IN_TYPE, 0, "Invalid packet type", continue);
 
+            //TODO save in receive and send, but don't do both on forward
+            IF_X_TRUE(tm.savePacket(packet), 8, "Failed to save packet: ", {});
+
+            //TODO move save node to seperate function
             if (ret == TM_IN_FORWARD) {
                 ESP_LOGI(TAG, "Packet is to be forwarded");
                 forwardPacket(packet, interfaces[i]);
@@ -1506,9 +1507,6 @@ extern "C" void app_main() {
                 forwardPacket(packet, interfaces[i]);
                 handleRequest(packet, interfaces[i]);
             }
-
-            ret = tm.savePacket(packet);
-            IF_X_TRUE(ret, 8, "Failed to save packet: ", continue);
         }
 
         ret = tm.clearSavedPackets();
