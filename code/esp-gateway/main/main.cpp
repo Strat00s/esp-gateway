@@ -1,3 +1,13 @@
+/** @file main.cpp
+ * @author Lukáš Baštýř (l.bastyr@seznam.cz, 492875)
+ * @brief Simple (mostly unfinished) gateway concept based around lora and tinymesh
+ * @version 0.1
+ * @date 27-11-2023
+ * 
+ * @copyright Copyright (c) 2023
+ * 
+ */
+
 //TODO proper wifi handling
 //TODO Add LCD
 //TODO Fix SD

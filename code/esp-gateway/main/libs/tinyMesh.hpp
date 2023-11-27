@@ -1,3 +1,13 @@
+/** @file tinyMesh.hpp
+ * @author Lukáš Baštýř (l.bastyr@seznam.cz, 492875)
+ * @brief TinyMesh is a simple protocol for IoT devices.
+ * @version 0.1
+ * @date 27-11-2023
+ * 
+ * @copyright Copyright (c) 2023
+ * 
+ */
+
 #pragma once
 #include <stdint.h>
 
@@ -174,9 +184,11 @@ Only custom messages are allowed to have flow of any size (continuous request, r
 #define TM_ERR_MSG_TYPE_LEN     0b0000100000000000 //invalid message type and length combination
 
 //TM_ERR_MESSAGES 
-#define TM_SERVICE_NOT_IMPLEMENTED 1
-#define TM_ERR_ADDRESS_LIMIT       2
-#define TM_ERR_UNKNOWN_NODE        3
+#define TM_ERR_MSG_UNHANDLED     1
+#define TM_ERR_SERVICE_UNHANDLED 2
+#define TM_ERR_ADDRESS_LIMIT     3
+#define TM_ERR_UNKNOWN_NODE      4
+#define TM_ERR_UNKNOWN_PORT      5
 
 //Check packet returns
 #define TM_IN_ANSWER        0 //OK, ERR and custom are the only valid responses
@@ -188,12 +200,15 @@ Only custom messages are allowed to have flow of any size (continuous request, r
 #define TM_ERR_IN_PORT      6 //incoming packet is for us but port is not registed
 #define TM_ERR_IN_DUPLICATE 7 //incoming packet is probably a diplicate
 
+//check packet
 #define TM_ERR_PORT_COUNT        1
 #define TM_ERR_PORT_EXISTS       2
 #define TM_ERR_DEFAULT_PORT      3
 #define TM_ERR_PORT_DOESNT_EXIST 4
 
-#define TM_ERR_SENT_COUNT 1
+//save packet id
+#define TM_ERR_SENT_COUNT   1
+//#define TM_ERR_DUPLICATE_ID 2
 
 /*----(MESSAGE TYPES)----*/
 //response

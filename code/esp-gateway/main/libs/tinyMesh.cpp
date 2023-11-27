@@ -1,3 +1,13 @@
+/** @file tinyMesh.cpp
+ * @author Lukáš Baštýř (l.bastyr@seznam.cz, 492875)
+ * @brief TinyMesh is a simple protocol for IoT devices.
+ * @version 0.1
+ * @date 27-11-2023
+ * 
+ * @copyright Copyright (c) 2023
+ * 
+ */
+
 #include "tinyMesh.hpp"
 #include <string.h>
 
@@ -366,6 +376,8 @@ uint8_t TinyMesh::checkPacket(packet_t packet) {
 
     //packet is for us but is not a response -> new packet
     //user must save this packet manually
+    if (!this->hasPort(packet.fields.port))
+        return TM_ERR_IN_PORT;
     return TM_IN_REQUEST;
 }
 
