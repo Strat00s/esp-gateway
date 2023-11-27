@@ -99,12 +99,10 @@ Only custom messages are allowed to have flow of any size (continuous request, r
         DESTINATION ADDRESS z (gateway)
         PORT NUMBER         0
         MESSAGE TYPE        PORT_ADVERTISEMENT
-        DATA LENGTH         2 * l
-        DATA...             l pairs of PORT and DATA_TYPE
+        DATA LENGTH         1 * l
+        DATA...             l PORTs
             PORT      8b
-            DATA_TYPE 8b
-                PORT DIR  0bxx000000
-                DATA TYPE 0b00xxxxxx
+            ...
     Route anouncement
         VERSION             1
         DEVICE TYPE         x
@@ -113,11 +111,11 @@ Only custom messages are allowed to have flow of any size (continuous request, r
         DESTINATION ADDRESS z (gateway)
         PORT NUMBER         0
         MESSAGE TYPE        ROUTE_ANOUNCEMENT
-        DATA LENGTH         2 + l
-        DATA...             LISTENER_ADDRESS, PORT and l extra PORTs
+        DATA LENGTH         2 * l
+        DATA...             LISTENER_ADDRESS and PORT pairs
             LISTENER_ADDRESS 8b
             LISTEN_PORT      8b
-            EXTRA_PORTS      8b * l
+            ...
     Reset
         VERSION             1
         DEVICE TYPE         x
@@ -200,7 +198,11 @@ Only custom messages are allowed to have flow of any size (continuous request, r
 #define TM_ERR_IN_PORT      6 //incoming packet is for us but port is not registed
 #define TM_ERR_IN_DUPLICATE 7 //incoming packet is probably a diplicate
 
-#define TM_ERR_PORT_COUNT 1
+#define TM_ERR_PORT_COUNT        1
+#define TM_ERR_PORT_EXISTS       2
+#define TM_ERR_DEFAULT_PORT      3
+#define TM_ERR_PORT_DOESNT_EXIST 4
+
 #define TM_ERR_SENT_COUNT 1
 
 /*----(MESSAGE TYPES)----*/
@@ -265,18 +267,18 @@ typedef union{
 } packet_t;
 
 //TODO combined
-typedef struct {
-    uint8_t dst_addr;
-    uint8_t port;
-    uint8_t msg_type;
-    uint8_t length;
-    uint8_t data[TM_DATA_LENGTH];
-} short_packet_t;
+//typedef struct {
+//    uint8_t dst_addr;
+//    uint8_t port;
+//    uint8_t msg_type;
+//    uint8_t length;
+//    uint8_t data[TM_DATA_LENGTH];
+//} short_packet_t;
 
-typedef struct {
-    uint8_t port;
-    uint8_t type;
-} port_cfg_t;
+//typedef struct {
+//    uint8_t port;
+//    uint8_t type;
+//} port_cfg_t;
 
 
 
@@ -289,7 +291,9 @@ private:
     uint8_t sent_cnt                      = 0;                    //current number of saved sent packets
     uint8_t port_cnt                      = 0;                    //current number of saved ports
     uint64_t sent_packets[TM_SENT_Q_SIZE] = {0};
-    port_cfg_t ports[TM_PORT_COUNT]       = {{TM_DEFAULT_PORT, TM_PORT_INOUT | TM_PORT_DATA_CUSTOM}}; //TODO use it (add, remove, get, set,...)
+    //port_cfg_t ports[TM_PORT_COUNT]       = {{TM_DEFAULT_PORT, TM_PORT_INOUT | TM_PORT_DATA_CUSTOM}}; //TODO use it (add, remove, get, set,...)
+    uint8_t ports[TM_PORT_COUNT]          = {TM_DEFAULT_PORT}; //TODO use it (add, remove, get, set,...)
+
 
 
     uint16_t lcg(uint16_t seed = 0);
@@ -380,21 +384,21 @@ public:
      * @param type Port type
      * @return TM_OK on succesful change or creation, TM_ERR_PORT_COUNT when there is not enough space to create new port.
      */
-    uint8_t setPort(uint8_t port, uint8_t type);
+    uint8_t addPort(uint8_t port);
 
     /** @brief Get copy of a port
      * 
      * @param port Port to search for
      * @return port_cfg_t - Found port on success, {0, 0} on failure.
      */
-    port_cfg_t getPort(uint8_t port);
+    bool hasPort(uint8_t port);
     
     /** @brief Remove port
      * 
      * @param port Port number
      * @return port_cfg_t - Found port on success, {0, 0} on failure.
      */
-    port_cfg_t removePort(uint8_t port);
+    uint8_t removePort(uint8_t port);
 
     /** @brief Build packet from a buffer.
      * 

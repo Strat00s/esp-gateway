@@ -26,6 +26,7 @@
 #include <queue>
 #include <deque>
 #include <algorithm>
+#include <set>
 
 #include <esp_log.h>
 #include "driver/gpio.h"
@@ -228,20 +229,14 @@ typedef struct {
 
 //ThreadSafeDeque<transaction_t> transactions;
 //TODO forward list timeout handler
-ThreadSafeDeque<uint64_t> forward_list;  //time_to_stale 32b | src_addr 16b | port 8b | msg_id 8b
+//ThreadSafeDeque<uint64_t> forward_list;  //time_to_stale 32b | src_addr 16b | port 8b | msg_id 8b
 
 std::map<uint32_t, QueueHandle_t> request_packet_qs;
 
-//TODO think about ports again (in, out, routing)
-//typedef struct {
-//    uint8_t port;
-//    uint8_t data_type;
-//} port_info_t;
-
 typedef struct {
-    uint8_t src;
+    uint8_t src_addr;
+    uint8_t dst_addr;
     uint8_t port;
-    uint8_t dst;
 } route_info_t;
 
 std::deque<route_info_t> user_routes;   //routes programable by the user via mqtt
@@ -251,8 +246,9 @@ typedef struct {
     uint8_t address;
     uint8_t node_type;
     //std::deque<port_cfg_t> ports;
-    std::map<uint8_t, uint8_t> ports;
+    //std::map<uint8_t, uint8_t> ports;
     //std::deque<route_info_t> routes;    //static routes derived from packets
+    std::set<uint8_t> ports;
     interfaceWrapper *interfaces[INTERFACE_COUNT];
     uint8_t interface_cnt;
 } node_info_t;
@@ -880,14 +876,6 @@ void sendPacket(packet_t packet, QueueHandle_t queue = defaultResponseQueue) {
         return;
 
     ESP_LOGI(TAG, "Packet sent succesfully");
-
-    //save transaction
-    //transaction_t transcation = {
-    //    .packet = packet,
-    //    .time_to_stale = millis() + 2 * 1000,
-    //    .request_queue = queue
-    //};
-    //transactions.push_back(transcation);
 }
 
 /*//TODO routes
@@ -1087,7 +1075,7 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
             node.interfaces[0] = interface;
             node.interface_cnt = 1;
             node.node_type = packet.fields.node_type;
-            node.ports[0] = TM_PORT_INOUT | TM_PORT_DATA_CUSTOM;
+            node.ports.insert(0);
             node_map[packet.fields.src_addr] = node;
             ESP_LOGI(TAG, "New node created: %s", node.name.c_str());
         }
@@ -1145,8 +1133,8 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
             }
             else {
                 auto node = search->second;
-                for (uint8_t i = 0; i < packet.fields.data_len; i = i + 2)
-                    node.ports[packet.fields.data[i]] = packet.fields.data[i + 1];
+                for (uint8_t i = 0; i < packet.fields.data_len; i++)
+                    node.ports.insert(packet.fields.data[i]);
                 ESP_LOGI(TAG, "Port(s) saved");
                 ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_OK, message_id);
             }
@@ -1457,7 +1445,7 @@ extern "C" void app_main() {
     memcpy(node.interfaces, interfaces, INTERFACE_COUNT);
     node.interface_cnt = INTERFACE_COUNT;
     node.node_type = tm.getDeviceType();
-    node.ports[0] = TM_PORT_INOUT | TM_PORT_DATA_CUSTOM;
+    node.ports.insert(0);
 
 
     xTaskNotify(led_task_handle, PTRN_ID_IDLE, eSetValueWithOverwrite);
