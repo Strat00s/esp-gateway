@@ -253,10 +253,11 @@ uint16_t TinyMesh::checkHeader(packet_t packet) {
             if (packet.fields.data_len == 0)
                 ret |= TM_ERR_MSG_TYPE_LEN;
             break;
-        case TM_MSG_ROUTE_ANOUNCEMENT:
-            if (packet.fields.data_len % 2 != 0)
-                ret |= TM_ERR_MSG_TYPE_LEN;
-            break;
+        //TODO v1.1
+        //case TM_MSG_ROUTE_ANOUNCEMENT:
+        //    if (packet.fields.data_len % 2 != 0)
+        //        ret |= TM_ERR_MSG_TYPE_LEN;
+        //    break;
         default: break;
     }
 
@@ -348,14 +349,7 @@ uint8_t TinyMesh::checkPacket(packet_t packet) {
         //answer to request
         if (packet_id == (uint32_t)sent_packets[i] || packet_id >> 8 == ((uint32_t)sent_packets[i]) >> 8) {
             //check for valid port
-            bool has_port = false;
-            for (int j = 0; j < TM_PORT_COUNT; j++) {
-                if (this->ports[j] == packet.fields.port) {
-                    has_port = true;
-                    break;
-                }
-            }
-            if (!has_port)
+            if (!this->hasPort(packet.fields.port))
                 return TM_ERR_IN_PORT;
             
             //packet is a valid answer to our request

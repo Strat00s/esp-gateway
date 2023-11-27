@@ -1,16 +1,7 @@
 #pragma once
 #include <stdint.h>
 
-//get data
-//build packet
-//check packet
-//is it for us?
-    //forward it if not
-    //is it valid port?
-        //if so, answer
-        //if not, error answer
-
-//TODO consistency
+//TODOs are mostly for V1.1 (if that's ever gonna happen)
 /*
 # Packet structure
 -------------HEADER-------------
@@ -103,7 +94,7 @@ Only custom messages are allowed to have flow of any size (continuous request, r
         DATA...             l PORTs
             PORT      8b
             ...
-    Route anouncement
+    TODO Route anouncement
         VERSION             1
         DEVICE TYPE         x
         MESSAGE ID          n
@@ -135,7 +126,7 @@ Only custom messages are allowed to have flow of any size (continuous request, r
         MESSAGE TYPE        STATUS
         DATA LENGTH         l
         DATA...             string of size l
-    //TODO Combined
+    TODO Combined
         VERSION             1
         DEVICE TYPE         x
         MESSAGE ID          n
@@ -187,8 +178,7 @@ Only custom messages are allowed to have flow of any size (continuous request, r
 #define TM_ERR_ADDRESS_LIMIT       2
 #define TM_ERR_UNKNOWN_NODE        3
 
-//#define TM_ERR_CFG_ADDRESS      0b0010000000000000
-
+//Check packet returns
 #define TM_IN_ANSWER        0 //OK, ERR and custom are the only valid responses
 #define TM_IN_REQUEST       1 //packet is a request (anything but OK and ERR)
 #define TM_IN_BROADCAST     2 //packet is a broadcast -> handle (, answer) and forward
@@ -213,25 +203,12 @@ Only custom messages are allowed to have flow of any size (continuous request, r
 #define TM_MSG_PING              2  //ping device
 #define TM_MSG_REGISTER          3  //register to the newtwork
 #define TM_MSG_PORT_ANOUNCEMENT  4  //anounce what ports a NODE is using
-#define TM_MSG_ROUTE_ANOUNCEMENT 6  //anounc already known routes
-#define TM_MSG_RESET             7  //request a device configuration reset
-#define TM_MSG_STATUS            8  //RAW string
-#define TM_MSG_COMBINED          9  //data contain multiple messages in format |TYPE|LEN|DATA|TYPE...
-#define TM_MSG_CUSTOM            10 //send custom data (to some port)
-#define TM_MSG_MAX               11
-
-//PORT DATA TYPES
-#define TM_PORT_DATA_NONE   0 //port has no defined data type (empty payload)
-#define TM_PORT_DATA_INT8   1 //port has a 8b int data type
-#define TM_PORT_DATA_INT16  2 //port has a 16b int data type
-#define TM_PORT_DATA_INT32  3 //port has a 32b int data type
-#define TM_PORT_DATA_STR    4 //port has a string as data type
-#define TM_PORT_DATA_CUSTOM 5 //port has custom data type
-
-//PORT DIRECTIONS
-#define TM_PORT_IN      0b01000000 //port is for incoming communication
-#define TM_PORT_OUT     0b10000000 //port is for outocming communication
-#define TM_PORT_INOUT   0b11000000 //port is for both incoming and outcoming communication
+#define TM_MSG_RESET             5  //request a device configuration reset
+#define TM_MSG_STATUS            6  //RAW string
+#define TM_MSG_CUSTOM            7 //send custom data (to some port)
+#define TM_MSG_MAX               8
+//#define TM_MSG_ROUTE_ANOUNCEMENT 6  //anounc already known routes //TODO v1.1 
+//#define TM_MSG_COMBINED          9  //data contain multiple messages in format |TYPE|LEN|DATA|TYPE... //TODO v1.1
 
 //NODE TYPES
 #define TM_TYPE_GATEWAY 0 //device is a gateway
@@ -246,8 +223,8 @@ Only custom messages are allowed to have flow of any size (continuous request, r
 #define TM_DEFAULT_PORT      0
 
 #define TM_TIME_TO_STALE     3000 //time in ms for a saved packet to become stale
-#define TM_PORT_COUNT        256  //how manny ports to store (minimum 1)
-#define TM_SENT_Q_SIZE       100  //this array is of type uint64_t, so it takes a lot of space!
+#define TM_PORT_COUNT        2    //how manny ports to store (minimum 1)
+#define TM_SENT_Q_SIZE       10   //this array is of type uint64_t, so it takes a lot of space!
 
 
 typedef union{
@@ -265,21 +242,6 @@ typedef union{
     } fields;
     uint8_t raw[TM_HEADER_LENGTH + TM_DATA_LENGTH];
 } packet_t;
-
-//TODO combined
-//typedef struct {
-//    uint8_t dst_addr;
-//    uint8_t port;
-//    uint8_t msg_type;
-//    uint8_t length;
-//    uint8_t data[TM_DATA_LENGTH];
-//} short_packet_t;
-
-//typedef struct {
-//    uint8_t port;
-//    uint8_t type;
-//} port_cfg_t;
-
 
 
 class TinyMesh {
