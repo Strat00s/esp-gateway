@@ -1154,7 +1154,7 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
         }
         case TM_MSG_RESET: {
             ESP_LOGE(TAG, "RESET NOT HANDLED");
-            uint8_t data = TM_SERVICE_NOT_IMPLEMENTED;
+            uint8_t data = TM_ERR_SERVICE_UNHANDLED;
             ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_ERR, message_id, 0, &data, 1);
             IF_X_TRUE(ret, 16, "Failed to create response: ", break);
             sendPacket(packet);
@@ -1163,7 +1163,7 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
         case TM_MSG_STATUS: {
             ESP_LOGI(TAG, "Sending response to status");
             ESP_LOGW(TAG, "Status handling not implemented");
-            uint8_t data = TM_SERVICE_NOT_IMPLEMENTED;
+            uint8_t data = TM_ERR_SERVICE_UNHANDLED;
             ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_ERR, message_id, 0, &data, 1);
             IF_X_TRUE(ret, 16, "Failed to create response: ", break);
             sendPacket(packet);
@@ -1173,7 +1173,7 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
             ESP_LOGI(TAG, "Sending response to custom");
             //handleCustomPacket(packet);
             ESP_LOGW(TAG, "Custom handling not implemented");
-            uint8_t data = TM_SERVICE_NOT_IMPLEMENTED;
+            uint8_t data = TM_ERR_SERVICE_UNHANDLED;
             ret = tm.buildPacket(&packet, packet.fields.src_addr, TM_MSG_ERR, message_id, 0, &data, 1);
             IF_X_TRUE(ret, 16, "Failed to create response: ", break);
             sendPacket(packet);
