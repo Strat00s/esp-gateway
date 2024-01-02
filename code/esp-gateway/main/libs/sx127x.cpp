@@ -56,7 +56,7 @@ void SX127X::registerDigitalRead(int (*func)(uint8_t)) {
     this->flags.single.has_pin_read  = true;
 }
 
-void SX127X::registerDelay(void (*func)(uint32_t)) {
+void SX127X::registerDelay(void (*func)(unsigned long)) {
     this->delay                  = func;
     this->flags.single.has_delay = true;
 }

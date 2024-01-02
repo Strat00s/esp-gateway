@@ -356,7 +356,7 @@ private:
     void (*pinMode)(uint8_t pin, uint8_t mode);
     void (*digitalWrite)(uint8_t pin, uint8_t val);
     int (*digitalRead)(uint8_t pin);
-    void (*delay)(uint32_t);
+    void (*delay)(unsigned long);
     unsigned long (*micros)();
     void (*SPIBeginTransfer)();
     void (*SPIEndTransfer)();
@@ -382,7 +382,7 @@ public:
     void registerPinMode(void (*func)(uint8_t, uint8_t), uint8_t input, uint8_t output);
     void registerDigitalWrite(void (*func)(uint8_t, uint8_t), uint8_t high = 1, uint8_t low = 0);
     void registerDigitalRead(int (*func)(uint8_t));
-    void registerDelay(void (*func)(uint32_t));
+    void registerDelay(void (*func)(unsigned long));
     void registerMicros(unsigned long (*micros)());
     void registerSPIBeginTransfer(void (*func)());
     void registerSPIEndTransfer(void (*func)());

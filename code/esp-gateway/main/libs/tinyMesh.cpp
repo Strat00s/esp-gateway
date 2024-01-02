@@ -97,7 +97,7 @@ uint8_t TinyMesh::buildPacket(packet_t *packet, uint8_t destination, uint16_t me
     packet->fields.version                   = this->version;
     packet->fields.source                    = this->address;
     packet->fields.destination               = destination;
-    packet->fields.data_length                  = length;
+    packet->fields.data_length               = length;
     packet->fields.flags.fields.node_type    = this->node_type;
     packet->fields.flags.fields.message_type = message_type;
 
@@ -184,7 +184,7 @@ uint8_t TinyMesh::checkPacket(packet_t *packet) {
             return ret | TM_PACKET_RND_RESPONSE;
         
         //packet is a new request
-        return ret | TM_PACKET_NEW;
+        return ret | TM_PACKET_REQUEST;
     }
 
     return TM_PACKET_FORWARD;
@@ -243,7 +243,8 @@ void TinyMesh::savePacket(packet_t *packet) {
 }
 
 uint8_t TinyMesh::clearSentQueue(bool force) {
-    if (force || millis == nullptr || (millis != nullptr && millis() > TM_CLEAR_TIME)) {
+    if (force || millis == nullptr || (millis != nullptr && this->last_msg_time + TM_CLEAR_TIME < millis())) {
+        this->last_msg_time = millis();
         memset(this->sent_queue, 0, sizeof(this->sent_queue));
         return 1;
     }

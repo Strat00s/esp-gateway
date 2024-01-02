@@ -128,22 +128,22 @@
 #define TM_PACKET_DUPLICATE    0b00000001
 #define TM_PACKET_RESPONSE     0b00000010
 #define TM_PACKET_RND_RESPONSE 0b00000100
-#define TM_PACKET_NEW          0b00001000
+#define TM_PACKET_REQUEST      0b00001000
 #define TM_PACKET_FORWARD      0b00010000
 
 /*----(MESSAGE TYPES)----*/
-#define TM_MSG_OK       0b00000000
-#define TM_MSG_ERR      0b00000100
-#define TM_MSG_REGISTER 0b00001000
-#define TM_MSG_PING     0b00001100
-#define TM_MSG_STATUS   0b00010000
-#define TM_MSG_CUSTOM   0b00111100
+#define TM_MSG_OK       0b0000
+#define TM_MSG_ERR      0b0001
+#define TM_MSG_REGISTER 0b0010
+#define TM_MSG_PING     0b0011
+#define TM_MSG_STATUS   0b0100
+#define TM_MSG_CUSTOM   0b1111
 
-//NODE TYPES
-#define TM_NODE_TYPE_GATEWAY 0b00000000
-#define TM_NODE_TYPE_NODE    0b00000001
-#define TM_NODE_TYPE_LP_NODE 0b00000010
-#define TM_NODE_TYPE_OTHER   0b00000011
+/*----(NODE TYPES)----*/
+#define TM_NODE_TYPE_GATEWAY 0b00
+#define TM_NODE_TYPE_NODE    0b01
+#define TM_NODE_TYPE_LP_NODE 0b10
+#define TM_NODE_TYPE_OTHER   0b11
 
 
 //DEFAULT CONFIG
@@ -191,7 +191,6 @@ private:
     uint8_t sent_queue[TM_SENT_QUEUE_SIZE] = {0};
     uint32_t last_msg_time                 = 0;
 
-    uint16_t lcg(uint16_t seed = 0);
     unsigned long (*millis)() = nullptr;
 
 public:
@@ -320,4 +319,7 @@ public:
 
     uint32_t createPacketID(packet_t *packet);
     uint32_t createPacketID(uint8_t source, uint8_t destination, uint16_t message_id);
+
+
+    uint16_t lcg(uint16_t seed = 0);
 };

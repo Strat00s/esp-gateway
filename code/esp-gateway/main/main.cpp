@@ -8,21 +8,11 @@
  * 
  */
 
-//TODO proper wifi handling
-//TODO Add LCD
-//TODO Fix SD
 //TODO Make subcribe and publish routines for mqtt
 //TODO mqtt class
 
 
 //TODO store saved data somewhere
-
-
-//Current TODOs:
-//TODO register with predefined address
-//TODO implement no gateway behavior
-//TODO route anouncement
-//TODO mqtt routing
 
 
 #include <stdio.h>
@@ -64,7 +54,7 @@
 #include "libs/interfaces/interfaceWrapper.hpp"
 #include "libs/interfaces/sx127xInterfaceWrapper.hpp"
 #include "libs/containers/threadsafeDeque.hpp"
-#include "wifi_cfg.h"
+#include "creds.h"
 
 #include <stdio.h>
 #include <stdint.h>
@@ -127,32 +117,46 @@
 #define SD_MOSI GPIO_NUM_11
 #define SD_CS   GPIO_NUM_10
 
+#define NODE_NAME "Gateway"
+#define NODE_LOCATION "Main hall"
+#define NODE_ADDRESS 1
+
 
 /*----(WiFi config)----*/
 //wifi config
 #define WIFI_SSID TEST_WIFI_SSID
 #define WIFI_PASS TEST_WIFI_PASS
 #define WIFI_MAXIMUM_RETRY  5
-#define WIFI_CONNECTED_BIT         BIT0
-#define WIFI_FAIL_BIT              BIT1
+#define WIFI_CONNECTED_BIT  BIT0
+#define WIFI_FAIL_BIT       BIT1
 
 
 /*----(MQTT config)----*/
+/*
+/nodes
+    /<name>
+        /address
+        /location
+        /type
+        /last_action
+        /status
+        /alive
+/sensors
+    /<location>
+        /<name>
+            /<type>
+                value
+*/
 //main node topics and variables
-#define MQTT_ID           0
-#define MQTT_NAME         "ESP32"
-#define MQTT_ROOT         "/gateway"
-#define MQTT_NODES_PATH   MQTT_ROOT       "/NODES"
-#define MQTT_NODE_PATH    MQTT_NODES_PATH "/0"
-#define MQTT_IP_PATH      MQTT_NODE_PATH  "/IP"
-#define MQTT_CONN_PATH    MQTT_NODE_PATH  "/Connected"
-#define MQTT_STATUS_PATH  MQTT_NODE_PATH  "/Status"
-#define MQTT_CMD_PATH     MQTT_NODE_PATH  "/CMD"
-#define MQTT_ALIVE_PATH   MQTT_NODE_PATH  "/Alive"
-#define MQTT_LA_PATH      MQTT_NODE_PATH  "/Last_Action"
-//routing topics
-#define MQTT_RULE_PATH    MQTT_ROOT       "/Rules"
-#define MQTT_FWD_PATH     MQTT_RULE_PATH  "/+/fwd"
+#define MQTT_NODES_PATH   "/nodes"
+#define MQTT_GATEWAY_PATH MQTT_NODES_PATH "/" NODE_NAME
+#define MQTT_SENSOR_PATH  "/sensors" //sensors/<location>/<name>/<type>
+#define MQTT_ALIVE       "/alive"
+#define MQTT_STATUS      "/status"
+#define MQTT_TYPE        "/type"
+#define MQTT_LAST_ACTION "/last_action"
+#define MQTT_ADDRESS "/address"
+#define MQTT_LOCATION "/location"
 
 //mqtt status severity
 #define MQTT_SEVERITY_SUCC    0
@@ -235,18 +239,18 @@ std::map<uint32_t, QueueHandle_t> request_queue;
 typedef struct {
     std::string name = "";
     std::string location = "";
+    std::deque<std::string> sensor_types;
     uint8_t address;
     uint8_t node_type;
     interfaceWrapper *interfaces[INTERFACE_COUNT];
     uint8_t interface_cnt;
 } node_info_t;
-
+node_info_t this_node;
 std::map<uint8_t, node_info_t> node_map;
 
 
 //task handles
 static TaskHandle_t led_task_handle;
-static TaskHandle_t lcd_task_handle;
 static TaskHandle_t sntp_task_handle;
 static TaskHandle_t mqtt_task_handle;
 
@@ -355,7 +359,7 @@ std::string getTimeStr() {
     struct tm timeinfo = {0};
     localtime_r(&now, &timeinfo);
     char buf[28] = {0};
-    sprintf(buf, "%02d.%02d.%04d %02d:%02d:%02d", (uint8_t)timeinfo.tm_mday, (uint8_t)timeinfo.tm_mon, (uint16_t)(1900 + timeinfo.tm_year), (uint8_t)timeinfo.tm_hour, (uint8_t)timeinfo.tm_min, (uint8_t)timeinfo.tm_sec);
+    sprintf(buf, "%02d.%02d.%04d %02d:%02d:%02d", timeinfo.tm_mday, timeinfo.tm_mon, (1900 + timeinfo.tm_year), timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
     return std::string(buf);
 }
 
@@ -385,22 +389,22 @@ void mqttLog(std::string msg, uint8_t severity = MQTT_SEVERITY_INFO, uint32_t ti
 
     if (severity == MQTT_SEVERITY_SUCC) {
         data += " [ OK ] " + msg;
-        mqttPublishQueue(MQTT_STATUS_PATH "/[ OK ]", data, timeout);
+        mqttPublishQueue(MQTT_GATEWAY_PATH MQTT_STATUS "/[ OK ]", data, timeout);
     }
     else if (severity == MQTT_SEVERITY_INFO) {
         data += " [INFO] " + msg;
-        mqttPublishQueue(MQTT_STATUS_PATH "/[INFO]", data, timeout);
+        mqttPublishQueue(MQTT_GATEWAY_PATH MQTT_STATUS "/[INFO]", data, timeout);
     }
     else if (severity == MQTT_SEVERITY_WARNING) {
         data += " [WARN] " + msg;
-        mqttPublishQueue(MQTT_STATUS_PATH "/[WARN]", data, timeout);
+        mqttPublishQueue(MQTT_GATEWAY_PATH MQTT_STATUS "/[WARN]", data, timeout);
     }
     else {
         data += " [FAIL] " + msg;
-        mqttPublishQueue(MQTT_STATUS_PATH "/[FAIL]", data, timeout);
+        mqttPublishQueue(MQTT_GATEWAY_PATH MQTT_STATUS "/[FAIL]", data, timeout);
     }
 
-    mqttPublishQueue(MQTT_STATUS_PATH, data, timeout);
+    mqttPublishQueue(MQTT_GATEWAY_PATH MQTT_STATUS, data, timeout);
 }
 
 //TODO refactor on mqtt class
@@ -471,20 +475,20 @@ static void eventLoopHandler(void* arg, esp_event_base_t event_base, int32_t eve
                 ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
 
                 //publish default structure of everything
-                mqttPublishQueue(MQTT_NODES_PATH, "0");
-                mqttPublishQueue(MQTT_RULE_PATH, "0");
-
-
+                //mqttPublishQueue(MQTT_NODES_PATH, this_node.name);
+                
                 //publishNodes();
-                mqttPublishQueue(MQTT_NODES_PATH, "1");
-                mqttPublishQueue(MQTT_NODE_PATH, MQTT_NAME);
-                mqttPublishQueue(MQTT_IP_PATH, ip_addr);
-                mqttPublishQueue(MQTT_CMD_PATH, "None");
-                mqttPublishQueue(MQTT_LA_PATH, "None");
-
+                mqttPublishQueue(MQTT_GATEWAY_PATH "/IP", ip_addr);
+                mqttPublishQueue(MQTT_GATEWAY_PATH MQTT_ADDRESS, std::to_string(this_node.address));
+                mqttPublishQueue(MQTT_GATEWAY_PATH MQTT_LOCATION, this_node.location);
+                mqttPublishQueue(MQTT_GATEWAY_PATH MQTT_TYPE, std::to_string(this_node.node_type));
+                mqttPublishQueue(MQTT_GATEWAY_PATH "/CMD", " ");
+                mqttPublishQueue(MQTT_GATEWAY_PATH MQTT_LAST_ACTION, " ");
+                mqttPublishQueue(MQTT_GATEWAY_PATH MQTT_STATUS, " ");
+                mqttPublishQueue(MQTT_GATEWAY_PATH MQTT_ALIVE, " ");
+                
                 //subscribe to everything
-                esp_mqtt_client_subscribe(mqtt_client, MQTT_CMD_PATH, 0);
-                esp_mqtt_client_subscribe(mqtt_client, MQTT_RULE_PATH "/#", 0);
+                esp_mqtt_client_subscribe(mqtt_client, std::string(MQTT_GATEWAY_PATH "/CMD").c_str(), 0);
                 break;
             }
 
@@ -524,7 +528,7 @@ static void eventLoopHandler(void* arg, esp_event_base_t event_base, int32_t eve
                 break;
 
             default:
-                ESP_LOGI(TAG, "Other event id:%d", event->event_id);
+                ESP_LOGW(TAG, "Other event id:%d", event->event_id);
                 break;
         }
         return;
@@ -596,19 +600,6 @@ void gpioInit() {
     mqttLog("GPIO configured", MQTT_SEVERITY_SUCC);
 }
 
-void lcdInit() {
-    static const char *TAG = "LCD Init";
-    ESP_LOGW(TAG, "Not implemented yet");
-
-    mqttLog("LCD configured", MQTT_SEVERITY_SUCC);
-}
-
-void sdInit() {
-    static const char *TAG = "SD Init";
-    ESP_LOGW(TAG, "Not implemented yet");
-
-    mqttLog("SD configured", MQTT_SEVERITY_SUCC);
-}
 
 void wifiInit() {
     static const char *TAG = "WiFi Init";
@@ -682,8 +673,8 @@ void mqttInit() {
     esp_mqtt_client_config_t mqtt5_cfg = {
         .broker = {
             .address = {
-                .uri = "mqtt://192.168.1.176",
-            }
+                .uri = MQTT_URI,
+            },
         },
         .session = {
             .last_will = {
@@ -1021,7 +1012,7 @@ void ledStatusTask(void *args) {
 
         //send alive msg on idle
         if (id == PTRN_ID_IDLE) {
-            mqtt_data_queue.write({.topic = MQTT_ALIVE_PATH, .data = getTimeStr()});
+            mqtt_data_queue.write({.topic = MQTT_GATEWAY_PATH MQTT_ALIVE, .data = getTimeStr()});
         }
 
         for (int i = 0; i < blink_patpern_list[id].cnt; i++) {
@@ -1083,8 +1074,8 @@ void mqttTask(void *args) {
             path.push_back(data.topic.substr(start_index, end_index - start_index));
             start_index = end_index + 1;
         }
-        if (data.topic.contains(MQTT_RULE_PATH)) {
-            ESP_LOGI(TAG, "New rule");
+        if (data.topic.contains("CMD")) {
+            ESP_LOGI(TAG, "Command: %s", data.data.c_str());
         }
     }
 }
@@ -1225,17 +1216,17 @@ extern "C" void app_main() {
 
     //TinyMesh configuration
     tm.setSeed();
-    tm.setAddress(1);
+    tm.setAddress(NODE_ADDRESS);
     tm.registerMillis(millis);
 
     //create this node in node map
-    node_info_t node;
-    node.name = "Gateway";
-    node.location = "Main hall";
-    node.address = tm.getAddress();
-    memcpy(node.interfaces, interfaces, INTERFACE_COUNT);
-    node.interface_cnt = INTERFACE_COUNT;
-    node.node_type = tm.getNodeType();
+    this_node.name = NODE_NAME;
+    this_node.location = NODE_LOCATION;
+    this_node.address = tm.getAddress();
+    memcpy(this_node.interfaces, interfaces, INTERFACE_COUNT);
+    this_node.interface_cnt = INTERFACE_COUNT;
+    this_node.node_type = tm.getNodeType();
+    node_map.insert({this_node.address, this_node});
 
 
     xTaskNotify(led_task_handle, PTRN_ID_IDLE, eSetValueWithOverwrite);
@@ -1279,7 +1270,7 @@ extern "C" void app_main() {
             }
 
             //handle new request
-            if (ret & TM_PACKET_NEW) {
+            if (ret & TM_PACKET_REQUEST) {
                 ESP_LOGI(TAG, "Packet is a request");
                 handleRequest(packet, interfaces[i]);
             }
