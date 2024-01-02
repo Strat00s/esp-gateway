@@ -123,8 +123,6 @@
 #define TM_ERR_MSG_UNHANDLED     1
 #define TM_ERR_SERVICE_UNHANDLED 2
 #define TM_ERR_ADDRESS_LIMIT     3
-#define TM_ERR_UNKNOWN_NODE      4
-#define TM_ERR_UNKNOWN_PORT      5
 
 //Check packet returns
 #define TM_PACKET_DUPLICATE    0b00000001
@@ -132,12 +130,6 @@
 #define TM_PACKET_RND_RESPONSE 0b00000100
 #define TM_PACKET_NEW          0b00001000
 #define TM_PACKET_FORWARD      0b00010000
-
-
-
-//save packet id
-#define TM_ERR_SENT_COUNT   1
-//#define TM_ERR_DUPLICATE_ID 2
 
 /*----(MESSAGE TYPES)----*/
 #define TM_MSG_OK       0b00000000
@@ -156,13 +148,16 @@
 
 //DEFAULT CONFIG
 #ifndef TM_DEFAULT_ADDRESS
-    #define TM_DEFAULT_ADDRESS   0
+    #define TM_DEFAULT_ADDRESS   0 //default address
 #endif
 #ifndef TM_BROADCAST_ADDRESS
-    #define TM_BROADCAST_ADDRESS 255
+    #define TM_BROADCAST_ADDRESS 255 //default broadcast address
 #endif
 #ifndef TM_SENT_QUEUE_SIZE
-    #define TM_SENT_QUEUE_SIZE   10   //array of uint32
+    #define TM_SENT_QUEUE_SIZE   10 //array of uint32
+#endif
+#ifndef TM_CLEAR_TIME
+    #define TM_CLEAR_TIME 3000 //time before clearing entire sent queue in ms
 #endif
 
 typedef union{
@@ -194,9 +189,10 @@ private:
     uint8_t gateway                        = TM_BROADCAST_ADDRESS; //gateway address
     uint8_t node_type                      = TM_NODE_TYPE_NODE;   //this NODE type
     uint8_t sent_queue[TM_SENT_QUEUE_SIZE] = {0};
+    uint32_t last_msg_time                 = 0;
 
     uint16_t lcg(uint16_t seed = 0);
-    uint32_t (*millis)() = nullptr;
+    unsigned long (*millis)() = nullptr;
 
 public:
 
@@ -224,7 +220,7 @@ public:
      * 
      * @param millis Function pointer to function returning milliseconds since boot
      */
-    void registerMillis(uint32_t (*millis)());
+    void registerMillis(unsigned long (*millis)());
 
     void setSeed(uint16_t seed = 42069);
 
@@ -320,5 +316,8 @@ public:
     void savePacket(packet_t *packet);
 
     /** @brief Clear queue of received/transmitted messages.*/
-    void clearSentQueue();
+    uint8_t clearSentQueue(bool force = false);
+
+    uint32_t createPacketID(packet_t *packet);
+    uint32_t createPacketID(uint8_t source, uint8_t destination, uint16_t message_id);
 };

@@ -29,7 +29,7 @@ void TinyMesh::setSeed(uint16_t seed) {
     lcg(seed);
 }
 
-void TinyMesh::registerMillis(uint32_t (*millis)()) {
+void TinyMesh::registerMillis(unsigned long (*millis)()) {
     this->millis = millis;
 }
 
@@ -86,7 +86,7 @@ uint16_t TinyMesh::getMessageId(packet_t *packet) {
 }
 
 
-uint8_t TinyMesh::buildPacket(packet_t *packet, uint8_t destination, uint16_t message_id, uint8_t message_type = TM_MSG_CUSTOM, uint8_t *data = nullptr, uint8_t length = 0) {
+uint8_t TinyMesh::buildPacket(packet_t *packet, uint8_t destination, uint16_t message_id, uint8_t message_type, uint8_t *data, uint8_t length) {
     uint16_t ret = TM_OK;
 
     if (packet == nullptr)
@@ -158,6 +158,38 @@ uint8_t TinyMesh::buildPacket(packet_t *packet, uint8_t *buffer, uint8_t length)
     return ret;
 }
 
+uint8_t TinyMesh::checkPacket(packet_t *packet) {
+    //if packet is in sent queue, it is a duplicate packet
+    uint32_t packet_id = createPacketID(packet);
+    for (int i = 0; i < TM_SENT_QUEUE_SIZE; i++) {
+        if (packet_id == this->sent_queue[i])
+            return TM_PACKET_DUPLICATE;
+    }
+
+    uint8_t ret = 0;
+    if (packet->fields.destination == TM_BROADCAST_ADDRESS)
+        ret |= TM_PACKET_FORWARD;
+
+    if (packet->fields.destination == this->address || packet->fields.destination == TM_BROADCAST_ADDRESS) {
+        packet_id = createPacketID((uint32_t)packet->fields.destination, (uint32_t)packet->fields.source, getMessageId(packet) - 1);
+
+        //check if packet id with flipped addresses and old message if is in queue (we sent it)
+        for (int i = 0; i < TM_SENT_QUEUE_SIZE; i++) {
+            if (packet_id == this->sent_queue[i])
+                return ret | TM_PACKET_RESPONSE;
+        }
+
+        //packet is a response but we didn't send anything
+        if (packet->fields.flags.fields.message_type == TM_MSG_OK || packet->fields.flags.fields.message_type == TM_MSG_ERR)
+            return ret | TM_PACKET_RND_RESPONSE;
+        
+        //packet is a new request
+        return ret | TM_PACKET_NEW;
+    }
+
+    return TM_PACKET_FORWARD;
+}
+
 uint8_t TinyMesh::checkHeader(packet_t *packet) {
     uint8_t ret = TM_OK;
 
@@ -198,47 +230,34 @@ uint8_t TinyMesh::checkHeader(packet_t *packet) {
 
 
 void TinyMesh::savePacket(packet_t *packet) {
+    uint32_t packet_id = createPacketID(packet);
+    for (size_t i = 0; i < TM_SENT_QUEUE_SIZE; i++) {
+        if (this->sent_queue[i] == packet_id)
+            return;
+    }
+    
     memmove(this->sent_queue + 1, this->sent_queue, sizeof(this->sent_queue) - sizeof(this->sent_queue[0]));
-    this->sent_queue[0] =  ((uint32_t)packet->fields.source) << 24;
-    this->sent_queue[0] |= ((uint32_t)packet->fields.destination) << 16;
-    this->sent_queue[0] |= getMessageId(packet);
+    this->sent_queue[0] = packet_id;
+    if (millis != nullptr)
+        last_msg_time = millis();
 }
 
-void TinyMesh::clearSentQueue() {
-    memset(this->sent_queue, 0, sizeof(this->sent_queue));
-}
-
-uint8_t TinyMesh::checkPacket(packet_t *packet) {
-    //if packet is in sent queue, it is a duplicate packet
-    uint32_t packet_id =  ((uint32_t)packet->fields.source) << 24;
-    packet_id          |= ((uint32_t)packet->fields.destination) << 16;
-    packet_id          |= getMessageId(packet);
-    for (int i = 0; i < TM_SENT_QUEUE_SIZE; i++) {
-        if (packet_id == this->sent_queue[i])
-            return TM_PACKET_DUPLICATE;
+uint8_t TinyMesh::clearSentQueue(bool force) {
+    if (force || millis == nullptr || (millis != nullptr && millis() > TM_CLEAR_TIME)) {
+        memset(this->sent_queue, 0, sizeof(this->sent_queue));
+        return 1;
     }
-
-    if (packet->fields.destination == this->address || packet->fields.destination == TM_BROADCAST_ADDRESS) {
-        packet_id =  ((uint32_t)packet->fields.destination) << 24;
-        packet_id |= ((uint32_t)packet->fields.source) << 16;
-        packet_id |= getMessageId(packet) - 1;
-        
-        //check if packet id with flipped addresses and old message if is in queue (we sent it)
-        for (int i = 0; i < TM_SENT_QUEUE_SIZE; i++) {
-            if (packet_id == this->sent_queue[i])
-                return TM_PACKET_RESPONSE;
-        }
-
-        //packet is a response but we didn't send anything
-        if (packet->fields.flags.fields.message_type == TM_MSG_OK || packet->fields.flags.fields.message_type == TM_MSG_ERR)
-            return TM_PACKET_RND_RESPONSE;
-        
-        //packet is a new request
-        return TM_PACKET_NEW;
-    }
-
-    return TM_PACKET_FORWARD;
+    return 0;
 }
+
+
+uint32_t TinyMesh::createPacketID(packet_t *packet) {
+    return ((uint32_t)packet->fields.source) << 24 | ((uint32_t)packet->fields.destination) << 16 | getMessageId(packet);
+}
+uint32_t TinyMesh::createPacketID(uint8_t source, uint8_t destination, uint16_t message_id) {
+    return ((uint32_t)source) << 24 | ((uint32_t)destination) << 16 | message_id;
+}
+
 
 
 uint16_t TinyMesh::lcg(uint16_t seed) {
