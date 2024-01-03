@@ -1,7 +1,7 @@
 /** @file main.cpp
  * @author Lukáš Baštýř (l.bastyr@seznam.cz, 492875)
- * @brief Simple (mostly unfinished) gateway concept based around lora and tinymesh
- * @version 0.1
+ * @brief Simple (mostly finished) gateway concept based around lora and tinymesh (a really simple protocol)
+ * @version 0.3
  * @date 27-11-2023
  * 
  * @copyright Copyright (c) 2023
@@ -10,9 +10,7 @@
 
 //TODO Make subcribe and publish routines for mqtt
 //TODO mqtt class
-
-
-//TODO store saved data somewhere
+//INFO won't happen because espressif mqtt is really hard to work around...
 
 
 #include <stdio.h>
@@ -455,9 +453,9 @@ std::string packet2json(packet_t packet) {
  * @return uint8_t 0 on success, 1 if string contains non-numerical character
  */
 template<typename T>
-uint8_t str2uint(T *result, std::string str) {
+uint8_t str2int(T *result, std::string str) {
     for (char const &c : str) {
-        if (!std::isdigit(c)) {
+        if (!std::isdigit(c) && c != '-') {
             mqttLog("Failed to convert string '"+ str +"' to number.", MQTT_SEVERITY_ERROR);
             return 1;
         }
@@ -540,7 +538,7 @@ void handleCommands(std::string command) {
     if (tokens[0] == "SET" && tokens.size() == 4) {
         uint8_t address;
 
-        if (str2uint(&address, tokens[2]))
+        if (str2int(&address, tokens[2]))
             return;
 
         auto search = node_map.find(address);
@@ -569,7 +567,7 @@ void handleCommands(std::string command) {
         ESP_LOGI(TAG, "send");
 
         uint8_t destination;
-        if (str2uint(&destination, tokens[2]))
+        if (str2int(&destination, tokens[2]))
             return;
 
         if (tokens[1] == "PING" && tokens.size() == 3)
@@ -1041,7 +1039,7 @@ void sendPacket(packet_t packet, SimpleQueue<packet_t> *queue) {
             //send failed -> log and repeat
             if (ret) {
                 ESP_LOGI(TAG, "Failed to send packet on interface %d: %d", interfaces[i]->getType(), ret);
-                mqttLog("Failed to send packet to "+ std::to_string(packet.fields.destination) +" on interface " + std::to_string(search->second.interfaces[0]->getType()), MQTT_SEVERITY_ERROR);
+                mqttLog("Failed to send packet on interface " + std::to_string(interfaces[i]->getType()), MQTT_SEVERITY_ERROR);
                 continue;
             }
 
@@ -1193,11 +1191,70 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
 
         case TM_MSG_CUSTOM: {
             ESP_LOGI(TAG, "Sending response to custom");
-            //handleCustomPacket(packet);
-            ESP_LOGW(TAG, "Custom handling not implemented");
-            uint8_t data = TM_ERR_SERVICE_UNHANDLED;
-            ret = tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_ERR, &data, 1);
-            IF_X_TRUE(ret, 8, "Failed to create response: ", break);
+
+            //received data must start with ND (Node Data), follwed with any of these in any order
+            //Txx - Temperature in °C in 8.8 notation
+            //Pxx - Pressure in hPa in 10.6 notaion
+            //Hxx - Humidity in % in 8.8 notation
+            //Bxx - Battery in V in 8.8 notation
+            //Sxx - Signal with specific code
+
+            if (packet.fields.data[0] != 'N' || packet.fields.data[1] != 'D') {
+                uint8_t data = TM_ERR_SERVICE_UNHANDLED;
+                tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_ERR, &data, 1);
+                sendPacket(packet);
+            }
+
+            //find node and build sensor path
+            std::string sensor_path;
+            auto search = node_map.find(packet.fields.source);
+            if (search == node_map.end())
+                sensor_path = MQTT_SENSOR_PATH "/default/" + std::to_string(packet.fields.source);
+
+            auto node = search->second;
+
+            if (node.location.size() == 0)
+                sensor_path = MQTT_SENSOR_PATH "/default/" + node.name;
+            else
+                sensor_path = MQTT_SENSOR_PATH "/" + node.location + "/" + node.name;
+
+            //build the data value and finish path
+            std::string val = "";
+            uint8_t i = 2;
+            bool match = false;
+            while(i + 2 < packet.fields.data_length) {
+                if (packet.fields.data[i] == 'T') {
+                    match = true;
+                    sensor_path += "/temperature";
+                }
+                else if (packet.fields.data[i] == 'P') {
+                    match = true;
+                    sensor_path += "/pressure";
+                }
+                else if (packet.fields.data[i] == 'H') {
+                    match = true;
+                    sensor_path += "/humidity";
+                }
+                else if (packet.fields.data[i] == 'B') {
+                    match = true;
+                    sensor_path += "/battery";
+                }
+                else if (packet.fields.data[i] == 'S') {
+                    match = true;
+                    sensor_path += "/signal";
+                }
+                else
+                    i++;
+
+                if (match == true) {
+                    match = false;
+                    val += std::to_string(packet.fields.data[i + 1]) + "." + std::to_string(packet.fields.data[i + 2]);
+                    i += 3;
+                    mqttPublishQueue(sensor_path, val);
+                }
+            }
+
+            tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_OK);
             sendPacket(packet);
             break;
         }
