@@ -158,38 +158,6 @@ uint8_t TinyMesh::buildPacket(packet_t *packet, uint8_t *buffer, uint8_t length)
     return ret;
 }
 
-uint8_t TinyMesh::checkPacket(packet_t *packet) {
-    //if packet is in sent queue, it is a duplicate packet
-    uint32_t packet_id = createPacketID(packet);
-    for (int i = 0; i < TM_SENT_QUEUE_SIZE; i++) {
-        if (packet_id == this->sent_queue[i])
-            return TM_PACKET_DUPLICATE;
-    }
-
-    uint8_t ret = 0;
-    if (packet->fields.destination == TM_BROADCAST_ADDRESS)
-        ret |= TM_PACKET_FORWARD;
-
-    if (packet->fields.destination == this->address || packet->fields.destination == TM_BROADCAST_ADDRESS) {
-        packet_id = createPacketID((uint32_t)packet->fields.destination, (uint32_t)packet->fields.source, getMessageId(packet) - 1);
-
-        //check if packet id with flipped addresses and old message if is in queue (we sent it)
-        for (int i = 0; i < TM_SENT_QUEUE_SIZE; i++) {
-            if (packet_id == this->sent_queue[i])
-                return ret | TM_PACKET_RESPONSE;
-        }
-
-        //packet is a response but we didn't send anything
-        if (packet->fields.flags.fields.message_type == TM_MSG_OK || packet->fields.flags.fields.message_type == TM_MSG_ERR)
-            return ret | TM_PACKET_RND_RESPONSE;
-        
-        //packet is a new request
-        return ret | TM_PACKET_REQUEST;
-    }
-
-    return TM_PACKET_FORWARD;
-}
-
 uint8_t TinyMesh::checkHeader(packet_t *packet) {
     uint8_t ret = TM_OK;
 
@@ -215,6 +183,7 @@ uint8_t TinyMesh::checkHeader(packet_t *packet) {
             break;
         case TM_MSG_REGISTER:
         case TM_MSG_PING:
+        case TM_MSG_RESET:
             if (packet->fields.data_length != 0)
                 ret |= TM_ERR_MSG_TYPE_LEN;
             break;
@@ -229,8 +198,40 @@ uint8_t TinyMesh::checkHeader(packet_t *packet) {
 }
 
 
-void TinyMesh::savePacket(packet_t *packet) {
+uint8_t TinyMesh::checkPacket(packet_t *packet) {
+    //if packet is in sent queue, it is a duplicate packet
     uint32_t packet_id = createPacketID(packet);
+    for (int i = 0; i < TM_SENT_QUEUE_SIZE; i++) {
+        if (packet_id == this->sent_queue[i])
+            return TM_PACKET_DUPLICATE;
+    }
+
+    uint8_t ret = TM_OK;
+    if (packet->fields.destination == TM_BROADCAST_ADDRESS)
+        ret |= TM_PACKET_FORWARD;
+
+    if (packet->fields.destination == this->address || packet->fields.destination == TM_BROADCAST_ADDRESS) {
+        packet_id = createPacketID((uint32_t)packet->fields.destination, (uint32_t)packet->fields.source, getMessageId(packet) - 1);
+
+        //check if packet id with flipped addresses and old message id is in queue (we sent it)
+        //or it is a broadcast response (rare, but can happen mostly for register)
+        for (int i = 0; i < TM_SENT_QUEUE_SIZE; i++) {
+            if (packet_id == this->sent_queue[i] || (packet_id | 0x00FF0000) == this->sent_queue[i])
+                return ret | TM_PACKET_RESPONSE;
+        }
+
+        //packet is a response but we didn't send anything, except for register
+        if (packet->fields.flags.fields.message_type == TM_MSG_OK || packet->fields.flags.fields.message_type == TM_MSG_ERR)
+            return ret | TM_PACKET_RND_RESPONSE;
+        
+        //packet is a new request
+        return ret | TM_PACKET_REQUEST;
+    }
+
+    return TM_PACKET_FORWARD;
+}
+
+void TinyMesh::savePacketID(uint32_t packet_id) {
     for (size_t i = 0; i < TM_SENT_QUEUE_SIZE; i++) {
         if (this->sent_queue[i] == packet_id)
             return;
@@ -242,9 +243,13 @@ void TinyMesh::savePacket(packet_t *packet) {
         last_msg_time = millis();
 }
 
+void TinyMesh::savePacket(packet_t *packet) {
+    savePacketID(createPacketID(packet));
+}
+
 uint8_t TinyMesh::clearSentQueue(bool force) {
-    if (force || millis == nullptr || (millis != nullptr && this->last_msg_time + TM_CLEAR_TIME < millis())) {
-        this->last_msg_time = millis();
+    if (force || (millis != nullptr && this->last_msg_time + TM_CLEAR_TIME < millis())) {
+        this->last_msg_time = millis == nullptr? 0 : millis();
         memset(this->sent_queue, 0, sizeof(this->sent_queue));
         return 1;
     }

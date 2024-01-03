@@ -1136,6 +1136,7 @@ void pingTask(void *args) {
     SimpleQueue<packet_t> ping_queue;
     packet_t packet;
     uint8_t destination = *(uint8_t *) args;
+    std::string result;
     uint8_t ret = tm.buildPacket(&packet, destination, tm.lcg(), TM_MSG_PING);
     IF_X_TRUE(ret, 8, "Failed to build ping packet", vTaskDelete(NULL););
 
@@ -1147,13 +1148,15 @@ void pingTask(void *args) {
     timer = micros() - timer;
 
     if (ret) {
-        ESP_LOGW(TAG, "Ping timeout\n");
-        mqttLog("Ping " + std::to_string(destination) + " timeout.", MQTT_SEVERITY_WARNING);
+        result = "Ping " + std::to_string(destination) + " timeout.";
+        ESP_LOGW(TAG, "%s", result.c_str());
+        mqttLog(result, MQTT_SEVERITY_WARNING);
         vTaskDelete(NULL);
     }
 
-    ESP_LOGI(TAG, "Ping time: %ldms\n", timer/1000);
-    mqttLog("Ping time: " + std::to_string(timer/1000), MQTT_SEVERITY_SUCC);
+    result = "Ping time: " + std::to_string(timer/1000) + "ms";
+    ESP_LOGI(TAG, "%s", result.c_str());
+    mqttLog(result, MQTT_SEVERITY_SUCC);
 
     vTaskDelete(NULL);
 }
@@ -1310,7 +1313,7 @@ extern "C" void app_main() {
             }
 
             //forward the message
-            if (ret & TM_PACKET_FORWARD) {
+            if (ret & TM_PACKET_FORWARD && packet.fields.flags.fields.message_type != TM_MSG_REGISTER) {
                 ESP_LOGI(TAG, "Packet is to be forwarded");
                 sendPacket(packet);
             }

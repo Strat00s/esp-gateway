@@ -137,6 +137,7 @@
 #define TM_MSG_REGISTER 0b0010
 #define TM_MSG_PING     0b0011
 #define TM_MSG_STATUS   0b0100
+#define TM_MSG_RESET    0b1110
 #define TM_MSG_CUSTOM   0b1111
 
 /*----(NODE TYPES)----*/
@@ -188,7 +189,7 @@ private:
     uint8_t address                        = TM_DEFAULT_ADDRESS;   //this NODE address
     uint8_t gateway                        = TM_BROADCAST_ADDRESS; //gateway address
     uint8_t node_type                      = TM_NODE_TYPE_NODE;   //this NODE type
-    uint8_t sent_queue[TM_SENT_QUEUE_SIZE] = {0};
+    uint32_t sent_queue[TM_SENT_QUEUE_SIZE] = {0};
     uint32_t last_msg_time                 = 0;
 
     unsigned long (*millis)() = nullptr;
@@ -307,6 +308,12 @@ public:
      * @return TM_OK on succes, TM_ERR_... macros on error
      */
     uint8_t checkPacket(packet_t *packet);
+
+    /** @brief Save packet id directly to sent queue
+     * 
+     * @param packet_id Packet id to save
+     */
+    void savePacketID(uint32_t packet_id);
 
     /** @brief Save packet ID from packet to sent queue for duplicity checks
      * 
