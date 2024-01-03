@@ -9,11 +9,11 @@
  * 
  */
 
+#pragma once
 #include <string>
 #include <queue>
 #include <freertos/semphr.h>
 #include <freertos/portmacro.h>
-
 
 template<typename T>
 class SimpleQueue {

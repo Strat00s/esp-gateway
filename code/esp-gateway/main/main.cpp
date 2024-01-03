@@ -53,7 +53,7 @@
 #include "libs/tinyMesh.hpp"
 #include "libs/interfaces/interfaceWrapper.hpp"
 #include "libs/interfaces/sx127xInterfaceWrapper.hpp"
-#include "libs/containers/threadsafeDeque.hpp"
+#include "libs/interfaces/mqttInterfaceWrapper.hpp"
 #include "creds.h"
 
 #include <stdio.h>
@@ -171,7 +171,7 @@
 
 
 //Networking
-#define INTERFACE_COUNT 2 //number of implemented and usable interfaces
+#define INTERFACE_COUNT 3 //number of implemented and usable interfaces
 #define TIME_TO_STALE   TM_TIME_TO_STALE //time (ms) for a record to become stale (when forwarding or when waiting for a response)
 
 
@@ -198,16 +198,18 @@ TinyMesh tm(TM_NODE_TYPE_GATEWAY);
 //interface instances
 sx127xInterfaceWrapper lora434_it(&lora_434);
 sx127xInterfaceWrapper lora868_it(&lora_868);
-interfaceWrapper *interfaces[INTERFACE_COUNT] = {&lora434_it, &lora868_it};
+mqttInterfaceWrapper mqtt_if;
+interfaceWrapper *interfaces[INTERFACE_COUNT] = {&lora434_it, &lora868_it, &mqtt_if};
 
 
 /*----(STRUCTURES)----*/
 //TODO refactor with mqtt
-//mqtt publish queue struct
 typedef struct {
     std::string topic;
-    std::string data;
-    uint8_t publish = 1;
+    std::string message;
+    bool publish;
+    uint8_t qos;
+    bool retain;
 } mqtt_queue_data_t;
 
 //simple queues for thread safety
@@ -473,7 +475,7 @@ uint8_t str2uint(T *result, std::string str) {
  * @param timeout Timeout in ticks how long to wait if queue is full
  */
 void mqttPublishQueue(std::string topic, std::string data, uint32_t timeout) {
-    mqtt_data_queue.write({.topic = topic, .data = data}, timeout);
+    mqtt_data_queue.write({.topic = topic, .message = data, .publish = true, .qos = 0, .retain = true}, timeout);
 }
 
 /** @brief Simple logging to mqtt 
@@ -696,8 +698,10 @@ static void eventLoopHandler(void* arg, esp_event_base_t event_base, int32_t eve
                 ESP_LOGI(TAG, "DATA=%.*s", event->data_len, event->data);
                 mqtt_queue_data_t data = {
                     .topic = std::string(event->topic, event->topic_len),
-                    .data = std::string(event->data, event->data_len),
-                    .publish = 0
+                    .message = std::string(event->data, event->data_len),
+                    .publish = false,
+                    .qos = 0,
+                    .retain = true
                 };
                 mqtt_data_queue.write(data);
                 break;
@@ -1267,16 +1271,19 @@ void mqttTask(void *args) {
 
         //publish message
         if (data.publish) {
-            ESP_LOGI(TAG, "Queued publish message:\n\t%s: %s", data.topic.c_str(), data.data.c_str());
-            esp_mqtt_client_publish(mqtt_client, data.topic.c_str(), data.data.c_str(), 0, 1, 1);
+            ESP_LOGI(TAG, "Queued publish message:\n\t%s: %s", data.topic.c_str(), data.message.c_str());
+            esp_mqtt_client_publish(mqtt_client, data.topic.c_str(), data.message.c_str(), 0, 1, 1);
             continue;
         }
 
         //receive message
-        ESP_LOGI(TAG, "Queued received message:\n\t%s: %s", data.topic.c_str(), data.data.c_str());
+        ESP_LOGI(TAG, "Queued received message:\n\t%s: %s", data.topic.c_str(), data.message.c_str());
 
         if (data.topic.contains("CMD")) {
-            handleCommands(data.data);
+            handleCommands(data.message);
+        }
+        if (data.topic.contains("interface/in")) {
+            mqtt_if.addData(data.message);
         }
     }
 }

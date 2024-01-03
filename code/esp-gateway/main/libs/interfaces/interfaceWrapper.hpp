@@ -34,6 +34,13 @@ public:
     }
 
     virtual uint8_t transmitData(uint8_t *data, uint8_t len) = 0;
+
+    /** @brief Get data from interface.
+     * 
+     * @param data Buffer for storing received data. Must be at least 256B long.
+     * @param len Length of received data.
+     * @return 0 on succes.
+     */
     virtual uint8_t getData(uint8_t *data, uint8_t *len) = 0;
     virtual uint8_t startReception() = 0;
     virtual uint8_t hasData() = 0;

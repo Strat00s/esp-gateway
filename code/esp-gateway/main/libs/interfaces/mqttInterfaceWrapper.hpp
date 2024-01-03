@@ -1,14 +1,40 @@
 #pragma once
 #include <stdio.h>
 #include "interfaceWrapper.hpp"
-#include "libs/sx127x.hpp"
+#include "../containers/simpleQueue.hpp"
+#include <cstring>
 
 
 class mqttInterfaceWrapper : public interfaceWrapper{
 private:
-    /* data */
+    SimpleQueue<std::string> in;
+
 public:
-    uint8_t transmitData(uint8_t *data, uint8_t len);
-    uint8_t receiveData(uint8_t *data, uint8_t *len);
-    uint8_t hasData();
+    mqttInterfaceWrapper() : interfaceWrapper(IW_TYPE_MQTT) {};
+
+    uint8_t transmitData(uint8_t *data, uint8_t len) {return 1;}
+    uint8_t getData(uint8_t *data, uint8_t *len) {
+        std::string tmp;
+        if(in.read(&tmp, 0)) {
+            data = nullptr;
+            len = nullptr;
+            return 1;
+        }
+
+        if (tmp.size() > 0xFF)
+            *len = 0xFF;
+        else
+            *len = tmp.size();
+        memcpy(data, tmp.c_str(), *len);
+        return 0;
+    }
+    uint8_t startReception() {return 1;}
+    uint8_t hasData() {
+        return in.size() ? 1 : 0;
+    }
+    uint8_t clearIRQ() {return 1;}
+
+    void addData(std::string data) {
+        in.write(data);
+    }
 };
