@@ -548,18 +548,22 @@ void handleCommands(std::string command) {
             return;
         }
 
+        auto node = search->second;
+
         if (tokens[1] == "LOCATION") {
             ESP_LOGI(TAG, "location");
-            search->second.location = tokens[3];
+            node.location = tokens[3];
             mqttPublishQueue(MQTT_NODES_PATH "/" + tokens[2] + MQTT_LOCATION, tokens[3]);
             mqttLog("Location of '"+ tokens[2] +"' changed to '"+ tokens[3] +"'.", MQTT_SEVERITY_SUCC);
         }
         if (tokens[1] == "NAME") {
             ESP_LOGI(TAG, "name");
-            search->second.location = tokens[3];
+            node.location = tokens[3];
             mqttPublishQueue(MQTT_NODES_PATH "/" + tokens[2], tokens[3]);
             mqttLog("Name of '"+ tokens[2] +"' changed to '"+ tokens[3] +"'.", MQTT_SEVERITY_SUCC);
         }
+
+        node_map[address] = node; //update the node
     }
 
     //SEND MSG_TYPE DESTINATION DATA_LEN DATA
@@ -1219,38 +1223,47 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
                 sensor_path = MQTT_SENSOR_PATH "/" + node.location + "/" + node.name;
 
             //build the data value and finish path
-            std::string val = "";
+            std::string val;
+            std::string sensor_type;
             uint8_t i = 2;
             bool match = false;
             while(i + 2 < packet.fields.data_length) {
                 if (packet.fields.data[i] == 'T') {
                     match = true;
-                    sensor_path += "/temperature";
+                    sensor_type += "/temperature";
                 }
                 else if (packet.fields.data[i] == 'P') {
                     match = true;
-                    sensor_path += "/pressure";
+                    sensor_type += "/pressure";
                 }
                 else if (packet.fields.data[i] == 'H') {
                     match = true;
-                    sensor_path += "/humidity";
+                    sensor_type += "/humidity";
                 }
                 else if (packet.fields.data[i] == 'B') {
                     match = true;
-                    sensor_path += "/battery";
+                    sensor_type += "/battery";
                 }
                 else if (packet.fields.data[i] == 'S') {
                     match = true;
-                    sensor_path += "/signal";
+                    sensor_type += "/signal";
                 }
                 else
                     i++;
 
                 if (match == true) {
                     match = false;
-                    val += std::to_string(packet.fields.data[i + 1]) + "." + std::to_string(packet.fields.data[i + 2]);
+                    val += std::to_string(packet.fields.data[i + 1]) + ".";
+                    if (packet.fields.data[i + 2] == 0)
+                        val += "00";
+                    else if (packet.fields.data[i + 2] < 10)
+                        val += "0" + std::to_string(packet.fields.data[i + 2]);
+                    else
+                        val += std::to_string(packet.fields.data[i + 2]);
                     i += 3;
-                    mqttPublishQueue(sensor_path, val);
+                    mqttPublishQueue(sensor_path + sensor_type, val);
+                    val.clear();
+                    sensor_type.clear();
                 }
             }
 
