@@ -273,6 +273,11 @@ std::string ip_addr;
 
 
 /*----(FUNCTION DEFINITIONS)----*/
+void mqttPublishQueue(std::string topic, std::string data, uint32_t timeout = 10);
+void mqttLog(std::string msg, uint8_t severity = MQTT_SEVERITY_INFO, uint32_t timeout = portMAX_DELAY);
+void mqttLogMessage(packet_t packet);
+void handleCommands(std::string command);
+
 uint8_t sendDataOnInterface(interfaceWrapper *it, uint8_t *data, uint8_t len);
 void sendPacket(packet_t packet, SimpleQueue<packet_t> *queue = &default_response_q);
 void handleAnswer(packet_t packet, interfaceWrapper *interface);
@@ -340,6 +345,7 @@ void SPITransfer(uint8_t addr, uint8_t *buffer, size_t length) {
 uint32_t millis() {
     return esp_timer_get_time() / 1000;
 }
+
 
 
 /*----(HELPER FUNCTIONS)----*/
@@ -434,6 +440,26 @@ std::string packet2json(packet_t packet) {
     return result;
 }
 
+/** @brief Convert string to specified integer type using stoi.
+ * 
+ * @tparam T Result type
+ * @param result Result of conversion
+ * @param str String to convert
+ * @return uint8_t 0 on success, 1 if string contains non-numerical character
+ */
+template<typename T>
+uint8_t str2uint(T *result, std::string str) {
+    for (char const &c : str) {
+        if (!std::isdigit(c)) {
+            mqttLog("Failed to convert string '"+ str +"' to number.", MQTT_SEVERITY_ERROR);
+            return 1;
+        }
+    }
+    *result = std::stoi(str);
+    return 0;
+}
+
+
 /*----(MQTT HELPERS)----*/
 /** @brief Add messages to be published to mqtt data queue
  * 
@@ -441,7 +467,7 @@ std::string packet2json(packet_t packet) {
  * @param data Data to be published
  * @param timeout Timeout in ticks how long to wait if queue is full
  */
-void mqttPublishQueue(std::string topic, std::string data, uint32_t timeout = 10) {
+void mqttPublishQueue(std::string topic, std::string data, uint32_t timeout) {
     mqtt_data_queue.write({.topic = topic, .data = data}, timeout);
 }
 
@@ -451,7 +477,7 @@ void mqttPublishQueue(std::string topic, std::string data, uint32_t timeout = 10
  * @param severity severity prefix
  * @param timeout Timeout in ticks how long to wait if queue is full
  */
-void mqttLog(std::string msg, uint8_t severity = MQTT_SEVERITY_INFO, uint32_t timeout = portMAX_DELAY) {
+void mqttLog(std::string msg, uint8_t severity, uint32_t timeout) {
     std::string data = getTimeStr();
 
     if (severity == MQTT_SEVERITY_SUCC) {
@@ -482,6 +508,7 @@ void mqttLogMessage(packet_t packet) {
     mqttPublishQueue(node_path + MQTT_LAST_PACKET, packet2json(packet));
 }
 
+
 void handleCommands(std::string command) {
     static const char *TAG = "HANDLE COMMANDS";
 
@@ -499,12 +526,28 @@ void handleCommands(std::string command) {
         return;
     }
 
+    if (tokens[0] == "PURGE" && tokens.size() == 1) {
+        //TODO
+    }
+
     if (tokens[0] == "SET" && tokens.size() == 4) {
         if (tokens[1] == "LOCATION") {
             ESP_LOGI(TAG, "location");
+            uint8_t address;
+
+            if (str2uint(&address, tokens[2]))
+                return;
+
+            auto search = node_map.find(address);
+            //find node 
+            //change its location
+            //send it to mqtt
         }
         if (tokens[1] == "NAME") {
             ESP_LOGI(TAG, "name");
+            //find node 
+            //change its location
+            //send it to mqtt
         }
     }
 
@@ -512,14 +555,16 @@ void handleCommands(std::string command) {
     if (tokens[0] == "SEND" && tokens.size() >= 3) {
         ESP_LOGI(TAG, "send");
 
-        if (tokens[1] == "PING" && tokens.size() == 3) {
-            uint8_t destination = std::stoi(tokens[2]);
+        uint8_t destination;
+        if (str2uint(&destination, tokens[2]))
+            return;
+
+        if (tokens[1] == "PING" && tokens.size() == 3)
             xTaskCreate(pingTask, "ping", 4096, (void *)&destination, 10, &ping_task_handle);
-        }
 
         if (tokens[1] == "RESET" && tokens.size() == 3) {
             packet_t packet;
-            uint8_t ret = tm.buildPacket(&packet, std::stoi(tokens[2]), tm.lcg(), TM_MSG_RESET);
+            uint8_t ret = tm.buildPacket(&packet, destination, tm.lcg(), TM_MSG_RESET);
             IF_X_TRUE(ret, 8, "Failed to create response: ", return;);
             sendPacket(packet);
         }
@@ -545,7 +590,7 @@ void handleCommands(std::string command) {
             if (data_length != TM_DATA_LENGTH)
                 data_length = data.size();
 
-            uint8_t ret = tm.buildPacket(&packet, std::stoi(tokens[2]), tm.lcg(), TM_MSG_CUSTOM, (uint8_t*)data.c_str(), data_length);
+            uint8_t ret = tm.buildPacket(&packet, destination, tm.lcg(), TM_MSG_CUSTOM, (uint8_t*)data.c_str(), data_length);
             IF_X_TRUE(ret, 8, "Failed to create response: ", return;);
             sendPacket(packet);
         }
