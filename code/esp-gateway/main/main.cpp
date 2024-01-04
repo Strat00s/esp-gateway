@@ -427,21 +427,22 @@ std::string packet2json(packet_t packet) {
         result += "\"NULL\"}";
         return result;
     }
+    result += "\"";
     for (size_t i = 0; i < packet.fields.data_length; i++) {
         char byte[9];
-        byte[0] = packet.fields.data[i] & 0b10000000;
-        byte[1] = packet.fields.data[i] & 0b01000000;
-        byte[2] = packet.fields.data[i] & 0b00100000;
-        byte[3] = packet.fields.data[i] & 0b00010000;
-        byte[4] = packet.fields.data[i] & 0b00001000;
-        byte[5] = packet.fields.data[i] & 0b00000100;
-        byte[6] = packet.fields.data[i] & 0b00000010;
-        byte[7] = packet.fields.data[i] & 0b00000001;
+        byte[0] = packet.fields.data[i] & 0b10000000 ? '1' : '0';
+        byte[1] = packet.fields.data[i] & 0b01000000 ? '1' : '0';
+        byte[2] = packet.fields.data[i] & 0b00100000 ? '1' : '0';
+        byte[3] = packet.fields.data[i] & 0b00010000 ? '1' : '0';
+        byte[4] = packet.fields.data[i] & 0b00001000 ? '1' : '0';
+        byte[5] = packet.fields.data[i] & 0b00000100 ? '1' : '0';
+        byte[6] = packet.fields.data[i] & 0b00000010 ? '1' : '0';
+        byte[7] = packet.fields.data[i] & 0b00000001 ? '1' : '0';
         byte[8] = ' ';
         result += std::string(byte, 9);
     }
 
-    result += "}";
+    result += "\"}";
     return result;
 }
 
@@ -558,7 +559,7 @@ void handleCommands(std::string command) {
         }
         if (tokens[1] == "NAME") {
             ESP_LOGI(TAG, "name");
-            node.location = tokens[3];
+            node.name = tokens[3];
             mqttPublishQueue(MQTT_NODES_PATH "/" + tokens[2], tokens[3]);
             mqttLog("Name of '"+ tokens[2] +"' changed to '"+ tokens[3] +"'.", MQTT_SEVERITY_SUCC);
         }
@@ -1055,9 +1056,9 @@ void sendPacket(packet_t packet, SimpleQueue<packet_t> *queue) {
         return;
 
     //save packet and queue
-    uint32_t packet_id = tm.createPacketID(&packet);
+    auto packet_id = tm.createPacketID(&packet);
     tm.savePacketID(packet_id);
-    request_queue.insert({packet_id, queue});
+    request_queue.insert({packet_id.rid, queue});
 
     ESP_LOGI(TAG, "Packet sent succesfully");
     mqttLog("Packet sent to " + std::to_string(packet.fields.destination));
@@ -1073,15 +1074,15 @@ void handleAnswer(packet_t packet, interfaceWrapper *interface) {
     static const char* TAG = "HANDLE ANSWER";
 
     //build packet_id of possible request, find it's response queue handler and send the packet there
-    uint32_t packet_id = tm.createPacketID(packet.fields.destination, packet.fields.source, tm.getMessageId(&packet) - 1);
-    auto search = request_queue.find(packet_id);
+    auto packet_id = tm.createPacketID(packet.fields.destination, packet.fields.source, tm.getMessageId(&packet) - 1);
+    auto search = request_queue.find(packet_id.rid);
     if (search == request_queue.end()) {
         ESP_LOGW(TAG, "No answer handler found, this should never happen");
         return;
     }
 
-    request_queue[packet_id]->write(packet); //send packet to corresponding task waiting in queue
-    request_queue.erase(packet_id); //remove the entry
+    request_queue[packet_id.rid]->write(packet); //send packet to corresponding task waiting in queue
+    request_queue.erase(packet_id.rid); //remove the entry
 }
 
 
@@ -1096,9 +1097,8 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
     std::string node_path = MQTT_NODES_PATH "/" + std::to_string(packet.fields.source); //mqtt node path
 
     //save new node or update node information (interfaces)
-    if (packet.fields.source != TM_DEFAULT_ADDRESS && packet.fields.source != TM_BROADCAST_ADDRESS) {
+    if (packet.fields.source != TM_DEFAULT_ADDRESS) {
         auto search = node_map.find(packet.fields.source);
-
         //no node found -> create and save new node
         if (search == node_map.end()) {
             node_info_t node;
@@ -1193,6 +1193,7 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
             break;
         }
 
+        //Used for posting sensor data to correct location on mqtt
         case TM_MSG_CUSTOM: {
             ESP_LOGI(TAG, "Sending response to custom");
 
