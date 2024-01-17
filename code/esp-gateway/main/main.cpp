@@ -350,6 +350,13 @@ uint32_t millis() {
 
 
 /*----(HELPER FUNCTIONS)----*/
+uint64_t combineArray(uint8_t *array, size_t cnt) {
+    uint64_t result = 0;
+    for (size_t i = 0; i < cnt; i++)
+        result |= array[i] << (cnt - i - 1);
+    return result;
+}
+
 void printBinary(uint32_t num, uint8_t len) {
     for (int i = 1; i < len + 1; i++) {
         printf("%ld", (num >> (len - i)) & 1);
@@ -358,11 +365,11 @@ void printBinary(uint32_t num, uint8_t len) {
 
 void printPacket(packet_t packet) {
     printf("Version:             %d\n", packet.fields.version);
-    printf("Device type:         %d\n", packet.fields.flags.fields.node_type);
+    printf("Node type:           %d\n", tm.getBits(packet.fields.flags, TM_NODE_TYPE_MSB, TM_NODE_TYPE_LSB));
     printf("Message id:          %d\n", tm.getMessageId(&packet));
     printf("Source address:      %d\n", packet.fields.source);
     printf("Destination address: %d\n", packet.fields.destination);
-    printf("Message type:        %d\n", packet.fields.flags.fields.message_type);
+    printf("Message type:        %d\n", tm.getBits(packet.fields.flags, TM_MSG_TYPE_MSB, TM_MSG_TYPE_LSB));
     printf("Data length:         %d\n", packet.fields.data_length);
     printf("Data: ");
     for (int i = 0; i < packet.fields.data_length; i++) {
@@ -405,20 +412,20 @@ std::string packet2json(packet_t packet) {
     result += "\"destination\": " + std::to_string(packet.fields.destination) + ",";
     result += "\"message id\": "  + std::to_string(tm.getMessageId(&packet))  + ",";
     result += "\"node type\": ";
-    switch (packet.fields.flags.fields.node_type) {
+    switch (tm.getBits(packet.fields.flags, TM_NODE_TYPE_MSB, TM_NODE_TYPE_LSB)) {
         case TM_NODE_TYPE_GATEWAY: result += "\"gateway\",";        break;
         case TM_NODE_TYPE_LP_NODE: result += "\"low power node\","; break;
         case TM_NODE_TYPE_NODE:    result += "\"node\",";           break;
         case TM_NODE_TYPE_OTHER:   result += "\"other\",";          break;
     }
     result += "\"message type\": ";
-    switch (packet.fields.flags.fields.message_type) {
+    switch (tm.getBits(packet.fields.flags, TM_MSG_TYPE_MSB, TM_MSG_TYPE_LSB)) {
         case TM_MSG_OK:       result += "\"ok\","; break;
         case TM_MSG_ERR:      result += "\"error\","; break;
         case TM_MSG_REGISTER: result += "\"register\","; break;
         case TM_MSG_PING:     result += "\"ping\","; break;
         case TM_MSG_STATUS:   result += "\"status\","; break;
-        case TM_MSG_RESET:    result += "\"reset\","; break;
+        //case TM_MSG_RESET:    result += "\"reset\","; break;
         case TM_MSG_CUSTOM:   result += "\"custom\","; break;
     }
     result += "\"data length\": " + std::to_string(packet.fields.data_length) + ",";
@@ -578,12 +585,16 @@ void handleCommands(std::string command) {
         if (tokens[1] == "PING" && tokens.size() == 3)
             xTaskCreate(pingTask, "ping", 4096, (void *)&destination, 10, &ping_task_handle);
 
-        if (tokens[1] == "RESET" && tokens.size() == 3) {
-            packet_t packet;
-            uint8_t ret = tm.buildPacket(&packet, destination, tm.lcg(), TM_MSG_RESET);
-            IF_X_TRUE(ret, 8, "Failed to create response: ", return;);
-            sendPacket(packet);
+        if (tokens[1] == "COMBINED" && tokens.size() == 3) {
+            mqttLog("COMBINED not implemented", MQTT_SEVERITY_WARNING);
         }
+
+        //if (tokens[1] == "RESET" && tokens.size() == 3) {
+        //    packet_t packet;
+        //    uint8_t ret = tm.buildPacket(&packet, destination, tm.lcg(), TM_MSG_RESET);
+        //    IF_X_TRUE(ret, 8, "Failed to create response: ", return;);
+        //    sendPacket(packet);
+        //}
 
         if (tokens[1] == "CUSTOM" && tokens.size() >= 4) {
             packet_t packet;
@@ -1056,9 +1067,11 @@ void sendPacket(packet_t packet, SimpleQueue<packet_t> *queue) {
         return;
 
     //save packet and queue
-    auto packet_id = tm.createPacketID(&packet);
-    tm.savePacketID(packet_id);
-    request_queue.insert({packet_id.rid, queue});
+    //auto packet_id = tm.createPacketID(&packet);
+    //tm.savePacketID(packet_id);
+    uint32_t tmp;
+    memcpy(&tmp, tm.createPacketID(&packet).raw, 4);
+    request_queue.insert({tmp, queue});
 
     ESP_LOGI(TAG, "Packet sent succesfully");
     mqttLog("Packet sent to " + std::to_string(packet.fields.destination));
@@ -1074,15 +1087,17 @@ void handleAnswer(packet_t packet, interfaceWrapper *interface) {
     static const char* TAG = "HANDLE ANSWER";
 
     //build packet_id of possible request, find it's response queue handler and send the packet there
-    auto packet_id = tm.createPacketID(packet.fields.destination, packet.fields.source, tm.getMessageId(&packet) - 1);
-    auto search = request_queue.find(packet_id.rid);
+    auto packet_id = tm.createPacketID(packet.fields.destination, packet.fields.source, tm.getMessageId(&packet) - 1, packet.fields.flags);
+    uint32_t tmp;
+    memcpy(&tmp, tm.createPacketID(&packet).raw, 4);
+    auto search = request_queue.find(tmp);
     if (search == request_queue.end()) {
         ESP_LOGW(TAG, "No answer handler found, this should never happen");
         return;
     }
 
-    request_queue[packet_id.rid]->write(packet); //send packet to corresponding task waiting in queue
-    request_queue.erase(packet_id.rid); //remove the entry
+    request_queue[tmp]->write(packet); //send packet to corresponding task waiting for data in queue
+    request_queue.erase(tmp); //remove the entry
 }
 
 
@@ -1106,7 +1121,7 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
             node.name = "Node " + std::to_string(node.address);
             node.interfaces[0] = interface;
             node.interface_cnt = 1;
-            node.node_type = packet.fields.flags.fields.node_type;
+            node.node_type = tm.getBits(packet.fields.flags, TM_NODE_TYPE_MSB, TM_NODE_TYPE_LSB);
             node_map.insert({node.address, node});
 
             ESP_LOGI(TAG, "New node created: %s", node.name.c_str());
@@ -1134,7 +1149,7 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
     }
 
     uint8_t ret;
-    switch (packet.fields.flags.fields.message_type) {
+    switch (tm.getBits(packet.fields.flags, TM_MSG_TYPE_MSB, TM_MSG_TYPE_LSB)) {
         case TM_MSG_REGISTER: {
             ESP_LOGI(TAG, "Sending response to register");
             
@@ -1185,13 +1200,22 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
             break;
         }
 
-        case TM_MSG_RESET: {
-            uint8_t data = TM_ERR_MSG_UNHANDLED;
-            ret = tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_ERR, &data, 1);
+        case TM_MSG_COMBINED: {
+            ESP_LOGI(TAG, "Sending response to combined");
+            //TODO parse...
+            ret = tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_OK);
             IF_X_TRUE(ret, 8, "Failed to create response: ", break);
             sendPacket(packet);
             break;
         }
+
+        //case TM_MSG_RESET: {
+        //    uint8_t data = TM_ERR_MSG_UNHANDLED;
+        //    ret = tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_ERR, &data, 1);
+        //    IF_X_TRUE(ret, 8, "Failed to create response: ", break);
+        //    sendPacket(packet);
+        //    break;
+        //}
 
         //Used for posting sensor data to correct location on mqtt
         case TM_MSG_CUSTOM: {
@@ -1273,7 +1297,7 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
             break;
         }
         default:
-            ESP_LOGI(TAG, "Got unhandled message type %d", packet.fields.flags.fields.message_type);
+            ESP_LOGI(TAG, "Got unhandled message type %d", tm.getBits(packet.fields.flags, TM_MSG_TYPE_MSB, TM_MSG_TYPE_LSB));
             ESP_LOGW(TAG, "^^^^^^^^^^^^^^^^^^^^^^^^^^^^^");
             ESP_LOGW(TAG, "This should not have happened");
             break;
@@ -1529,13 +1553,26 @@ extern "C" void app_main() {
             }
 
             ret = tm.checkPacket(&packet); //check packets relation to gateway
+
+
             if (ret & TM_PACKET_DUPLICATE) {
                 ESP_LOGI(TAG, "Duplicate packet");
                 mqttLog("Received duplicate packet from " + std::to_string(packet.fields.source), MQTT_SEVERITY_WARNING);
                 continue;
             }
-            tm.savePacket(&packet); //save non-duplicates
+
             mqttLogMessage(packet); //log the message to the node
+
+            //repeat packet that is to be forwarded
+            if (ret & TM_PACKET_REPEAT) {
+                if (ret & TM_PACKET_FORWARD) {
+                    ESP_LOGI(TAG, "Packet is a repeat and is to be forwarded");
+                    sendPacket(packet);
+                    continue;
+                }
+                ESP_LOGI(TAG, "Packet is a repeat and was already handled");
+                continue;
+            }
 
             if (ret & TM_PACKET_RND_RESPONSE) {
                 ESP_LOGW(TAG, "Random response");
@@ -1558,7 +1595,7 @@ extern "C" void app_main() {
             }
 
             //forward the message
-            if (ret & TM_PACKET_FORWARD && packet.fields.flags.fields.message_type != TM_MSG_REGISTER) {
+            if (ret & TM_PACKET_FORWARD && !(tm.getBits(packet.fields.flags, TM_MSG_TYPE_MSB, TM_MSG_TYPE_LSB)== TM_MSG_REGISTER)) {
                 ESP_LOGI(TAG, "Packet is to be forwarded");
                 sendPacket(packet);
             }
