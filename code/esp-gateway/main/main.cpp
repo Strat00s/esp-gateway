@@ -835,10 +835,10 @@ void sntpInit() {
     time_t now = 0;
     struct tm timeinfo = { 0 };
 
-    ESP_LOGI(TAG, "Syncing time with");
+    ESP_LOGI(TAG, "Syncing time");
     while(sntp_get_sync_status() != SNTP_SYNC_STATUS_COMPLETED)
         vTaskDelay(pdMS_TO_TICKS(500));
-    
+
     time(&now);
 
     //set timezone
@@ -1341,7 +1341,7 @@ extern "C" void app_main() {
     gpioInit(); //configure all gpio pins
 
     //create default alive task
-    xTaskCreate(aliveTask, "alive", 512, nullptr, 99, &led_task_handle);
+    xTaskCreate(aliveTask, "alive", 1024, nullptr, 99, &led_task_handle);
 
     //initialize nvs partition
     auto ret = nvs_flash_init();
@@ -1394,7 +1394,6 @@ extern "C" void app_main() {
 
     /*----(MAIN LOOP)----*/
     packet_t packet;
-    uint8_t ret;
     uint8_t len;
     while(true) {
         //go through interfaces and check for new data
