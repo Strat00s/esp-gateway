@@ -1,3 +1,5 @@
+main/creds.h
+
 .devcontainer
 .config
 *.o

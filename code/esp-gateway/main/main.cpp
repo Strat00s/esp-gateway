@@ -8,14 +8,7 @@
  * 
  */
 
-//TODO Make subcribe and publish routines for mqtt
-//TODO mqtt class
-//INFO won't happen because espressif mqtt is really hard to work around...
 
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <string>
 #include <vector>
 #include <set>
@@ -26,25 +19,40 @@
 #include <algorithm>
 #include <set>
 #include <sstream>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <time.h>
+#include <sys/time.h>
 
-#include <esp_log.h>
+#include "esp_log.h"
 #include "driver/gpio.h"
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
-#include <freertos/queue.h>
-#include <freertos/portmacro.h>
-#include <freertos/queue.h>
-#include <driver/spi_master.h>
-#include <esp_timer.h>
-#include <esp_intr_alloc.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
+#include "freertos/portmacro.h"
+#include "freertos/queue.h"
+#include "driver/spi_master.h"
+#include "esp_timer.h"
+#include "esp_intr_alloc.h"
 #include "freertos/event_groups.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
-#include "esp_log.h"
 #include "nvs_flash.h"
 #include "lwip/err.h"
 #include "lwip/sys.h"
+#include "esp_system.h"
+#include "nvs_flash.h"
+#include "esp_event.h"
+#include "esp_netif.h"
+#include "esp_netif_types.h"
+#include "mqtt_client.h"
+#include "mqtt5_client.h"
+#include "esp_sntp.h"
+#include "esp_netif_sntp.h"
 
 #include "libs/sx127x.hpp"
 #include "libs/containers/simpleQueue.hpp"
@@ -54,26 +62,7 @@
 #include "libs/interfaces/mqttInterfaceWrapper.hpp"
 #include "creds.h"
 
-#include <stdio.h>
-#include <stdint.h>
-#include <stddef.h>
-#include <string.h>
-#include "esp_system.h"
-#include "nvs_flash.h"
-#include "esp_event.h"
-#include "esp_netif.h"
-#include <esp_netif_types.h>
-#include "esp_log.h"
-#include "mqtt_client.h"
-#include "mqtt5_client.h"
-#include <esp_sntp.h>
-#include <esp_netif_sntp.h>
-
-
-/*----(FUNCTION MACROS)----*/
-#define IF_X_FALSE(x, msg, cmd)        {if (x) {ESP_LOGI(TAG, msg);printf("\n"); cmd;}}
-#define IF_X_TRUE(x, bits, msg, cmd)   {if (x) {ESP_LOGI(TAG, msg);printBinary(x, bits);printf("\n"); cmd;}}
-
+/*----(FUNCTION MACORS)----*/
 #define STRINGIFY(x) #x
 #define TOSTRING(x) STRINGIFY(x)
 #define CONCATENATE(a, b) a b
@@ -117,6 +106,7 @@
 #define SD_MISO GPIO_NUM_13
 #define SD_MOSI GPIO_NUM_11
 #define SD_CS   GPIO_NUM_10
+
 
 #define NODE_NAME "Gateway"
 #define NODE_LOCATION "Main hall"
@@ -170,7 +160,7 @@
 
 //Networking
 #define INTERFACE_COUNT 3 //number of implemented and usable interfaces
-#define TIME_TO_STALE   TM_TIME_TO_STALE //time (ms) for a record to become stale (when forwarding or when waiting for a response)
+#define TIME_TO_STALE   TM_CLEAR_TIME //time (ms) for a record to become stale (when forwarding or when waiting for a response)
 
 
 //blink pattern ids
@@ -180,6 +170,7 @@
 
 
 /*----(Instances)----*/
+//radios
 SX127X lora_434(CS1, RST1, DIO01);
 SX127X lora_868(CS4, RST4, DIO04);
 
@@ -187,13 +178,14 @@ SX127X lora_868(CS4, RST4, DIO04);
 SemaphoreHandle_t spi_mux = xSemaphoreCreateMutex();
 spi_device_handle_t dev_handl;
 
+//mqtt
 esp_mqtt_client_handle_t mqtt_client;
 esp_netif_ip_info_t ip_info;
 
 //tinymesh
 TinyMesh tm(TM_NODE_TYPE_GATEWAY);
 
-//interface instances
+//interfaces
 sx127xInterfaceWrapper lora434_it(&lora_434);
 sx127xInterfaceWrapper lora868_it(&lora_868);
 mqttInterfaceWrapper mqtt_if;
@@ -201,7 +193,6 @@ interfaceWrapper *interfaces[INTERFACE_COUNT] = {&lora434_it, &lora868_it, &mqtt
 
 
 /*----(STRUCTURES)----*/
-//TODO refactor with mqtt
 typedef struct {
     std::string topic;
     std::string message;
@@ -209,11 +200,6 @@ typedef struct {
     uint8_t qos;
     bool retain;
 } mqtt_queue_data_t;
-
-//simple queues for thread safety
-SimpleQueue<mqtt_queue_data_t> mqtt_data_queue;
-std::map<uint32_t, SimpleQueue<packet_t>*> request_queue;
-SimpleQueue<packet_t> default_response_q;
 
 //Node struct
 typedef struct {
@@ -228,47 +214,21 @@ typedef struct {
 node_info_t this_node;
 std::map<uint8_t, node_info_t> node_map;
 
+//simple thread safe queues
+SimpleQueue<mqtt_queue_data_t> mqtt_data_queue; //for mqtt task
+SimpleQueue<packet_t> default_response_q; //default response handler queue
+std::map<uint32_t, SimpleQueue<packet_t>*> request_queue; //for any task
+
 //task handles
-static TaskHandle_t led_task_handle;
-static TaskHandle_t sntp_task_handle;
-static TaskHandle_t mqtt_task_handle;
-static TaskHandle_t ping_task_handle;
-static TaskHandle_t default_response_task_handle;
-
-//wifi event group
-static EventGroupHandle_t wifi_event_group;
-
-//led blink patterns
-struct blink_paptern {
-    uint8_t cnt;
-    uint32_t on_time;
-    uint32_t off_time;
-    uint32_t wait;
-};
-static blink_paptern blink_patpern_list[] = {
-    {   //PTRN_ID_ERR
-        .cnt      = 5,
-        .on_time  = 300,
-        .off_time = 200,
-        .wait     = 800,
-    },
-    {   //PTRN_ID_IDLE
-        .cnt      = 1,
-        .on_time  = 100,
-        .off_time = 0,
-        .wait     = 5000,
-    },
-    {   //PTRN_ID_INIT
-        .cnt      = 1,
-        .on_time  = 100,
-        .off_time = 0,
-        .wait     = 100,
-    },
-};
+static TaskHandle_t led_task_handle;              //blinking
+static TaskHandle_t mqtt_task_handle;             //handles mqtt listening and publishing
+static TaskHandle_t ping_task_handle;             //ping service task
+static TaskHandle_t default_response_task_handle; //default response (does pretty much nothing)
 
 
 /*----(Rest of variables)----*/
 //wifi
+static EventGroupHandle_t wifi_event_group;
 static int s_retry_num = 0;
 std::string ip_addr;
 
@@ -283,8 +243,7 @@ uint8_t sendDataOnInterface(interfaceWrapper *it, uint8_t *data, uint8_t len);
 void sendPacket(packet_t packet, SimpleQueue<packet_t> *queue = &default_response_q);
 void handleAnswer(packet_t packet, interfaceWrapper *interface);
 void handleRequest(packet_t packet, interfaceWrapper *interface, bool repeat = false);
-void ledStatusTask(void *args);
-void sntpTask (void *args);
+void aliveTask(void *args);
 void mqttTask(void *args);
 void pingTask(void *args);
 void defaultResponseTask(void *args);
@@ -348,15 +307,7 @@ uint32_t millis() {
 }
 
 
-
 /*----(HELPER FUNCTIONS)----*/
-uint64_t combineArray(uint8_t *array, size_t cnt) {
-    uint64_t result = 0;
-    for (size_t i = 0; i < cnt; i++)
-        result |= array[i] << (cnt - i - 1);
-    return result;
-}
-
 void printBinary(uint32_t num, uint8_t len) {
     for (int i = 1; i < len + 1; i++) {
         printf("%ld", (num >> (len - i)) & 1);
@@ -401,11 +352,13 @@ static void log_error_if_nonzero(const char *message, int error_code) {
         ESP_LOGE(TAG, "Last error %s: 0x%x", message, error_code);
 }
 
+
+/** @brief Convert packet data to string*/
 std::string packetData2str(packet_t packet) {
     return std::string((char*)packet.fields.data, packet.fields.data_length);
 }
 
-//convert packet into a json string
+/** @brief  Convert packet into a json string*/
 std::string packet2json(packet_t packet) {
     std::string result = "{";
     result += "\"version\": "      + std::to_string(packet.fields.version)     + ",";
@@ -422,13 +375,12 @@ std::string packet2json(packet_t packet) {
     }
     result += "\"message type\": ";
     switch (tm.getBits(packet.fields.flags, TM_MSG_TYPE_MSB, TM_MSG_TYPE_LSB)) {
-        case TM_MSG_OK:       result += "\"ok\","; break;
-        case TM_MSG_ERR:      result += "\"error\","; break;
+        case TM_MSG_OK:       result += "\"ok\",";       break;
+        case TM_MSG_ERR:      result += "\"error\",";    break;
         case TM_MSG_REGISTER: result += "\"register\","; break;
-        case TM_MSG_PING:     result += "\"ping\","; break;
-        case TM_MSG_STATUS:   result += "\"status\","; break;
-        //case TM_MSG_RESET:    result += "\"reset\","; break;
-        case TM_MSG_CUSTOM:   result += "\"custom\","; break;
+        case TM_MSG_PING:     result += "\"ping\",";     break;
+        case TM_MSG_STATUS:   result += "\"status\",";   break;
+        case TM_MSG_CUSTOM:   result += "\"custom\",";   break;
     }
     result += "\"data length\": " + std::to_string(packet.fields.data_length) + ",";
     result += "\"data\": ";
@@ -437,18 +389,17 @@ std::string packet2json(packet_t packet) {
         return result;
     }
     result += "\"";
-    for (size_t i = 0; i < packet.fields.data_length; i++) {
-        char byte[9];
-        byte[0] = packet.fields.data[i] & 0b10000000 ? '1' : '0';
-        byte[1] = packet.fields.data[i] & 0b01000000 ? '1' : '0';
-        byte[2] = packet.fields.data[i] & 0b00100000 ? '1' : '0';
-        byte[3] = packet.fields.data[i] & 0b00010000 ? '1' : '0';
-        byte[4] = packet.fields.data[i] & 0b00001000 ? '1' : '0';
-        byte[5] = packet.fields.data[i] & 0b00000100 ? '1' : '0';
-        byte[6] = packet.fields.data[i] & 0b00000010 ? '1' : '0';
-        byte[7] = packet.fields.data[i] & 0b00000001 ? '1' : '0';
-        byte[8] = ' ';
-        result += std::string(byte, 9);
+
+    if (tm.getBits(packet.fields.flags, TM_MSG_TYPE_MSB, TM_MSG_TYPE_LSB) == TM_MSG_STATUS) {
+        result += packetData2str(packet);
+    }
+    else {
+        for (size_t i = 0; i < packet.fields.data_length; i++) {
+            for (int ii = 0; ii < 8; ii++)
+                result += packet.fields.data[i] & ((uint8_t)1 << (7 - ii)) ? '1' : '0';
+            if (i < packet.fields.data_length - 1)
+                result += ' ';
+        }
     }
 
     result += "\"}";
@@ -504,6 +455,7 @@ void mqttLog(std::string msg, uint8_t severity, uint32_t timeout) {
     mqttPublishQueue(CONCATENATE(MQTT_GATEWAY_PATH,MQTT_LOG), data, timeout);
 }
 
+/** @brief Log packet to node*/
 void mqttLogMessage(packet_t packet) {
     if (packet.fields.source == TM_DEFAULT_ADDRESS)
         return;
@@ -514,27 +466,31 @@ void mqttLogMessage(packet_t packet) {
     mqttPublishQueue(node_path + MQTT_LAST_PACKET, packet2json(packet));
 }
 
-
+/** @brief MQTT command handling
+ * 
+ * @param command Command string
+ */
 void handleCommands(std::string command) {
-    static const char *TAG = "HANDLE COMMANDS";
+    static const char *TAG = "cmd_handle";
 
     ESP_LOGI(TAG, "Command: %s", command.c_str());
+
+    //split input by spaces
     std::vector<std::string> tokens;
     std::string token;
     std::istringstream stream(command);
-    while (std::getline(stream, token, ' ')) {
+    while (std::getline(stream, token, ' '))
         tokens.push_back(token);
-    }
 
     if (tokens.size() == 0) {
-        ESP_LOGW(TAG, "No tokens");
+        ESP_LOGE(TAG, "No tokens");
         mqttLog("No tokens", MQTT_SEVERITY_ERROR);
         return;
     }
 
-    if (tokens[0] == "PURGE" && tokens.size() == 1) {
-        //TODO
-    }
+    //if (tokens[0] == "PURGE" && tokens.size() == 1) {
+    //    //TODO
+    //}
 
     if (tokens[0] == "SET" && tokens.size() == 4) {
         uint8_t address;
@@ -543,33 +499,28 @@ void handleCommands(std::string command) {
             return;
 
         auto search = node_map.find(address);
-        //node is known -> send data on first interface
         if (search == node_map.end()) {
             mqttLog("Node '"+ tokens[2] +"' not found.", MQTT_SEVERITY_WARNING);
             return;
         }
 
         auto node = search->second;
-
         if (tokens[1] == "LOCATION") {
-            ESP_LOGI(TAG, "location");
             node.location = tokens[3];
-            mqttPublishQueue(MQTT_NODES_PATH "/" + tokens[2] + MQTT_LOCATION, tokens[3]);
+            mqttPublishQueue(CONCATENATE(MQTT_NODES_PATH, "/") + tokens[2] + MQTT_LOCATION, tokens[3]);
             mqttLog("Location of '"+ tokens[2] +"' changed to '"+ tokens[3] +"'.", MQTT_SEVERITY_SUCC);
         }
         if (tokens[1] == "NAME") {
-            ESP_LOGI(TAG, "name");
             node.name = tokens[3];
-            mqttPublishQueue(MQTT_NODES_PATH "/" + tokens[2], tokens[3]);
+            mqttPublishQueue(CONCATENATE(MQTT_NODES_PATH, "/") + tokens[2], tokens[3]);
             mqttLog("Name of '"+ tokens[2] +"' changed to '"+ tokens[3] +"'.", MQTT_SEVERITY_SUCC);
         }
 
         node_map[address] = node; //update the node
     }
 
-    //SEND MSG_TYPE DESTINATION DATA_LEN DATA
+    //SEND MSG_TYPE DESTINATION DATA
     if (tokens[0] == "SEND" && tokens.size() >= 3) {
-        ESP_LOGI(TAG, "send");
 
         uint8_t destination;
         if (str2int(&destination, tokens[2]))
@@ -578,15 +529,8 @@ void handleCommands(std::string command) {
         if (tokens[1] == "PING" && tokens.size() == 3)
             xTaskCreate(pingTask, "ping", 4096, (void *)&destination, 10, &ping_task_handle);
 
-        if (tokens[1] == "COMBINED" && tokens.size() == 3) {
-            mqttLog("COMBINED not implemented", MQTT_SEVERITY_WARNING);
-        }
-
-        //if (tokens[1] == "RESET" && tokens.size() == 3) {
-        //    packet_t packet;
-        //    uint8_t ret = tm.buildPacket(&packet, destination, tm.lcg(), TM_MSG_RESET);
-        //    IF_X_TRUE(ret, 8, "Failed to create response: ", return;);
-        //    sendPacket(packet);
+        //if (tokens[1] == "COMBINED" && tokens.size() == 3) {
+        //    mqttLog("COMBINED not implemented", MQTT_SEVERITY_WARNING);
         //}
 
         if (tokens[1] == "CUSTOM" && tokens.size() >= 4) {
@@ -611,7 +555,10 @@ void handleCommands(std::string command) {
                 data_length = data.size();
 
             uint8_t ret = tm.buildPacket(&packet, destination, tm.lcg(), TM_MSG_CUSTOM, (uint8_t*)data.c_str(), data_length);
-            IF_X_TRUE(ret, 8, "Failed to create response: ", return;);
+            if (ret) {
+                ESP_LOGE(TAG, "Failed to create response: %d", ret);
+                return;
+            }
             sendPacket(packet);
         }
     }
@@ -619,7 +566,6 @@ void handleCommands(std::string command) {
 
 
 /*----(MAIN EVENT HANDLER)----*/
-//default generic esp_event loop handler
 static void eventLoopHandler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
     static const char *TAG = "Event Handler";
 
@@ -638,7 +584,7 @@ static void eventLoopHandler(void* arg, esp_event_base_t event_base, int32_t eve
                 }
                 else
                     xEventGroupSetBits(wifi_event_group, WIFI_FAIL_BIT);
-                ESP_LOGI(TAG,"connect to the AP fail");
+                ESP_LOGE(TAG,"Failed to connect to AP");
                 break;
 
             default: ESP_LOGW(TAG, "Unhandled ID %ld for WIFI_EVENT", event_id); break;
@@ -655,7 +601,7 @@ static void eventLoopHandler(void* arg, esp_event_base_t event_base, int32_t eve
                 char buf[17] = {0};
                 sprintf(buf, IPSTR, IP2STR(&ip_info.ip));
                 ip_addr = buf;
-                ESP_LOGI(TAG, "got ip: %s", ip_addr.c_str());
+                ESP_LOGI(TAG, "Got ip: %s", ip_addr.c_str());
                 s_retry_num = 0;
                 xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
                 break;
@@ -694,15 +640,13 @@ static void eventLoopHandler(void* arg, esp_event_base_t event_base, int32_t eve
                 break;
             }
 
-            case MQTT_EVENT_DISCONNECTED: ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED");                           break;
-            case MQTT_EVENT_SUBSCRIBED:   ESP_LOGI(TAG, "MQTT_EVENT_SUBSCRIBED, msg_id=%d", event->msg_id);   break;
-            case MQTT_EVENT_UNSUBSCRIBED: ESP_LOGI(TAG, "MQTT_EVENT_UNSUBSCRIBED, msg_id=%d", event->msg_id); break;
+            case MQTT_EVENT_DISCONNECTED: ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED"); break;
+            case MQTT_EVENT_SUBSCRIBED:   ESP_LOGI(TAG, "MQTT_EVENT_SUBSCRIBED");   break;
+            case MQTT_EVENT_UNSUBSCRIBED: ESP_LOGI(TAG, "MQTT_EVENT_UNSUBSCRIBED"); break;
             case MQTT_EVENT_PUBLISHED:    break; //ESP_LOGI(TAG, "MQTT_EVENT_PUBLISHED, msg_id=%d", event->msg_id);    break;
 
+            //got data on subscribed topic
             case MQTT_EVENT_DATA: {
-                //ESP_LOGI(TAG, "MQTT_EVENT_DATA");
-                //ESP_LOGI(TAG, "TOPIC=%.*s", event->topic_len, event->topic);
-                //ESP_LOGI(TAG, "DATA=%.*s", event->data_len, event->data);
                 mqtt_queue_data_t data = {
                     .topic = std::string(event->topic, event->topic_len),
                     .message = std::string(event->data, event->data_len),
@@ -714,18 +658,18 @@ static void eventLoopHandler(void* arg, esp_event_base_t event_base, int32_t eve
                 break;
             }
 
-            case MQTT_EVENT_BEFORE_CONNECT: ESP_LOGW(TAG, "MQTT_EVENT_BEFORE_CONNECT"); break;
-            case MQTT_EVENT_DELETED:        ESP_LOGW(TAG, "MQTT_EVENT_DELETED");        break;
-            case MQTT_USER_EVENT:           ESP_LOGW(TAG, "MQTT_USER_EVENT");           break;
+            case MQTT_EVENT_BEFORE_CONNECT: ESP_LOGI(TAG, "MQTT_EVENT_BEFORE_CONNECT"); break;
+            case MQTT_EVENT_DELETED:        ESP_LOGI(TAG, "MQTT_EVENT_DELETED");        break;
+            case MQTT_USER_EVENT:           ESP_LOGI(TAG, "MQTT_USER_EVENT");           break;
 
             case MQTT_EVENT_ERROR:
-                ESP_LOGI(TAG, "MQTT_EVENT_ERROR");
-                ESP_LOGI(TAG, "MQTT5 return code is %d", event->error_handle->connect_return_code);
+                ESP_LOGE(TAG, "MQTT_EVENT_ERROR");
+                ESP_LOGE(TAG, "MQTT5 return code is %d", event->error_handle->connect_return_code);
                 if (event->error_handle->error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT) {
                     log_error_if_nonzero("reported from esp-tls", event->error_handle->esp_tls_last_esp_err);
                     log_error_if_nonzero("reported from tls stack", event->error_handle->esp_tls_stack_err);
                     log_error_if_nonzero("captured as transport's socket errno",  event->error_handle->esp_transport_sock_errno);
-                    ESP_LOGI(TAG, "Last errno string (%s)", strerror(event->error_handle->esp_transport_sock_errno));
+                    ESP_LOGE(TAG, "Last errno string (%s)", strerror(event->error_handle->esp_transport_sock_errno));
                 }
                 break;
 
@@ -742,8 +686,6 @@ static void eventLoopHandler(void* arg, esp_event_base_t event_base, int32_t eve
 
 /*----(INITIALIZATION)----*/
 void gpioInit() {
-    static const char *TAG = "GPIO Init";
-
     //configure default pin states
     gpio_reset_pin(SCK);
     gpio_reset_pin(MISO);
@@ -783,23 +725,7 @@ void gpioInit() {
     gpio_reset_pin(SD_MOSI);
     gpio_reset_pin(SD_MISO);
 
-    ESP_LOGI(TAG, "All pins reset");
-
-
     gpio_set_direction(STATUS_LED, GPIO_MODE_INPUT_OUTPUT);
-
-    //
-    //enable gpio interupts
-    //gpio_set_intr_type(DIO01, GPIO_INTR_POSEDGE);
-    //gpio_set_intr_type(DIO04, GPIO_INTR_POSEDGE);
-    //gpio_intr_enable(DIO01);
-    //gpio_intr_enable(DIO04);
-    //gpio_install_isr_service(0);
-    //gpio_isr_handler_add(DIO01, gpio_isr_handler, (void*) DIO01);
-    //gpio_isr_handler_add(DIO04, gpio_isr_handler, (void*) DIO04);
-    ESP_LOGI(TAG, "All pins configured");
-
-    mqttLog("GPIO configured", MQTT_SEVERITY_SUCC);
 }
 
 void wifiInit() {
@@ -840,7 +766,7 @@ void wifiInit() {
     if (bits & WIFI_CONNECTED_BIT)
         ESP_LOGI(TAG, "Connected to AP SSID: %s pswd: %s", WIFI_SSID, WIFI_PASS);
     else if (bits & WIFI_FAIL_BIT) {
-        ESP_LOGW(TAG, "Failed to connect to SSID: %s pswd: %s", WIFI_SSID, WIFI_PASS);
+        ESP_LOGE(TAG, "Failed to connect to SSID: %s pswd: %s", WIFI_SSID, WIFI_PASS);
         while(true);
     }
     else {
@@ -898,34 +824,27 @@ void mqttInit() {
 }
 
 void sntpInit() {
-    static const char *TAG = "SNTPInit";
+    static const char *TAG = "sntp_init";
 
-    //default SNTP config
-    esp_sntp_config_t config = {
-        .smooth_sync = false,
-        .server_from_dhcp = false,
-        .wait_for_sync = true,
-        .start = true,
-        .sync_cb = NULL,
-        .renew_servers_after_new_IP = false,
-        .ip_event_to_renew = IP_EVENT_STA_GOT_IP,
-        .index_of_first_server = 0,
-        .num_of_servers = 1,
-        .servers = "cz.pool.ntp.org",
-    };
-    esp_netif_sntp_init(&config);
+    sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    sntp_setservername(0, "cz.pool.ntp.org");
+    sntp_set_sync_mode(SNTP_SYNC_MODE_SMOOTH);
+    sntp_set_sync_interval(3600000);
+    sntp_init();
 
-    //wait max 10s for NTP sync
-    if (esp_netif_sntp_sync_wait(pdMS_TO_TICKS(10000)) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to connect to NTP server");
-        mqttLog("Failed to connect to NTP server", MQTT_SEVERITY_ERROR);
-        return;
-    }
+    time_t now = 0;
+    struct tm timeinfo = { 0 };
+
+    ESP_LOGI(TAG, "Syncing time with");
+    while(sntp_get_sync_status() != SNTP_SYNC_STATUS_COMPLETED)
+        vTaskDelay(pdMS_TO_TICKS(500));
+    
+    time(&now);
 
     //set timezone
     setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
     tzset();
-
+    localtime_r(&now, &timeinfo);
     std::string curr_time = getTimeStr();
     ESP_LOGI(TAG, "Current time: %s", curr_time.c_str());
 
@@ -975,7 +894,6 @@ void configureLora(SX127X *lora, float freq, uint8_t sync_word, uint16_t preambl
     if (rc) {
         xTaskNotify(led_task_handle, PTRN_ID_ERR, eSetValueWithOverwrite);
         ESP_LOGE(TAG, "BEGIN ERROR: %d", rc);
-        mqttLog("LoRa (" + std::to_string(freq) + "MHz) configuration failed (" + std::to_string(rc), MQTT_SEVERITY_ERROR);
         return;
     }
 
@@ -995,14 +913,27 @@ uint8_t sendDataOnInterface(interfaceWrapper *it, uint8_t *data, uint8_t len) {
     static const char* TAG = "SEND ON INTERFACE";
 
     //basic checks
-    IF_X_TRUE(it == nullptr, 0, "Interface is null", return 0xFF);
-    IF_X_TRUE(data == nullptr, 0, "Data is null", return 0xFF); 
-    IF_X_TRUE(it->getType() >= IW_TYPE_ERR, 0, "Unknown interface", return 0xFF);
+    if (it == nullptr) {
+        ESP_LOGE(TAG, "interface null");
+        return 0xFF;
+    }
+
+    if (data == nullptr) {
+        ESP_LOGE(TAG, "data null");
+        return 0XFF;
+    }
+
+    if (it->getType() >= IW_TYPE_ERR) {
+        ESP_LOGE(TAG, "wrong interface type");
+        return 0xFF;
+    }
+
 
     //transmit the data
     ESP_LOGI(TAG, "Sending data on interface %d", it->getType());
     auto ret = it->transmitData(data, len);  //send the data
-    IF_X_TRUE(ret, 8, "Interface error: ", {});
+    if (ret)
+        ESP_LOGE(TAG, "Interface error");
     it->startReception();
     return ret;
 }
@@ -1031,7 +962,7 @@ void sendPacket(packet_t packet, SimpleQueue<packet_t> *queue) {
 
         //send failed -> log
         if (ret) {
-            ESP_LOGI(TAG, "Failed to send packet on interface %d: %d", search->second.interfaces[0]->getType(), ret);
+            ESP_LOGE(TAG, "Failed to send packet on interface %d: %d", search->second.interfaces[0]->getType(), ret);
             mqttLog("Failed to send packet to "+ std::to_string(packet.fields.destination) +" on interface " + std::to_string(search->second.interfaces[0]->getType()), MQTT_SEVERITY_ERROR);
             return;
         }
@@ -1047,7 +978,7 @@ void sendPacket(packet_t packet, SimpleQueue<packet_t> *queue) {
 
             //send failed -> log and repeat
             if (ret) {
-                ESP_LOGI(TAG, "Failed to send packet on interface %d: %d", interfaces[i]->getType(), ret);
+                ESP_LOGE(TAG, "Failed to send packet on interface %d: %d", interfaces[i]->getType(), ret);
                 mqttLog("Failed to send packet on interface " + std::to_string(interfaces[i]->getType()), MQTT_SEVERITY_ERROR);
                 continue;
             }
@@ -1060,14 +991,11 @@ void sendPacket(packet_t packet, SimpleQueue<packet_t> *queue) {
         return;
 
     //save packet and queue
-    //auto packet_id = tm.createPacketID(&packet);
-    //tm.savePacketID(packet_id);
     uint32_t tmp;
     memcpy(&tmp, tm.createPacketID(&packet).raw, 4);
     request_queue.insert({tmp, queue});
 
     ESP_LOGI(TAG, "Packet sent succesfully");
-    //mqttLog("Packet sent to " + std::to_string(packet.fields.destination));
     mqttLogMessage(packet);
 }
 
@@ -1082,10 +1010,10 @@ void handleAnswer(packet_t packet, interfaceWrapper *interface) {
     //build packet_id of possible request, find it's response queue handler and send the packet there
     auto packet_id = tm.createPacketID(packet.fields.destination, packet.fields.source, tm.getMessageId(&packet) - 1, packet.fields.flags);
     uint32_t tmp;
-    memcpy(&tmp, tm.createPacketID(&packet).raw, 4);
+    memcpy(&tmp, packet_id.raw, 4);
     auto search = request_queue.find(tmp);
     if (search == request_queue.end()) {
-        ESP_LOGW(TAG, "No answer handler found, this should never happen");
+        ESP_LOGE(TAG, "No answer handler found, this should never happen");
         return;
     }
 
@@ -1158,7 +1086,10 @@ void handleRequest(packet_t packet, interfaceWrapper *interface, bool repeat) {
             else
                 ret = tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_OK, &new_address, 1, rpt_cnt);
 
-            IF_X_TRUE(ret, 8, "Failed to create response: ", break);
+            if (ret) {
+                ESP_LOGE(TAG, "Failed to create response: %d", ret);
+                break;
+            }
             sendPacket(packet);
             break;
         }
@@ -1166,7 +1097,10 @@ void handleRequest(packet_t packet, interfaceWrapper *interface, bool repeat) {
         case TM_MSG_PING: {
             ESP_LOGI(TAG, "Sending response to ping");
             ret = tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_OK, nullptr, 0, rpt_cnt);
-            IF_X_TRUE(ret, 16, "Failed to create response: ", break);
+            if (ret) {
+                ESP_LOGE(TAG, "Failed to create response: %d", ret);
+                break;
+            }
             sendPacket(packet);
             break;
         }
@@ -1176,7 +1110,10 @@ void handleRequest(packet_t packet, interfaceWrapper *interface, bool repeat) {
             mqttPublishQueue(node_path + MQTT_STATUS, packetData2str(packet));
             uint8_t str[] = "OK";
             ret = tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_OK, str, 2, rpt_cnt);
-            IF_X_TRUE(ret, 8, "Failed to create response: ", break);
+            if (ret) {
+                ESP_LOGE(TAG, "Failed to create response: %d", ret);
+                break;
+            }
             sendPacket(packet);
             mqttPublishQueue(node_path + MQTT_STATUS, std::string((char*)packet.fields.data, packet.fields.data_length));
             break;
@@ -1186,18 +1123,13 @@ void handleRequest(packet_t packet, interfaceWrapper *interface, bool repeat) {
             ESP_LOGI(TAG, "Sending response to combined");
             //TODO parse...
             ret = tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_OK, nullptr, 0, rpt_cnt);
-            IF_X_TRUE(ret, 8, "Failed to create response: ", break);
+            if (ret) {
+                ESP_LOGE(TAG, "Failed to create response: %d", ret);
+                break;
+            }
             sendPacket(packet);
             break;
         }
-
-        //case TM_MSG_RESET: {
-        //    uint8_t data = TM_ERR_MSG_UNHANDLED;
-        //    ret = tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_ERR, &data, 1);
-        //    IF_X_TRUE(ret, 8, "Failed to create response: ", break);
-        //    sendPacket(packet);
-        //    break;
-        //}
 
         //Used for posting sensor data to correct location on mqtt
         case TM_MSG_CUSTOM: {
@@ -1295,45 +1227,15 @@ void handleRequest(packet_t packet, interfaceWrapper *interface, bool repeat) {
 
 
 /*----(TASKS)----*/
-/** @brief Task to blink LED and also alive task to send mqtt alive messages
- * 
- * @param args 
- */
-void ledStatusTask(void *args) {
-    mqttLog("LED status task started");
-
-    //setup default values
-    uint32_t id = PTRN_ID_INIT;
-    uint8_t old_id = 0;
-
+/** @brief Simple alive blink task that blinks every 15s and published alive message*/
+void aliveTask(void *args) {
+    TickType_t last_wakeup = xTaskGetTickCount();
     while (true) {
-        xTaskNotifyWait(0, 0, &id, pdMS_TO_TICKS(blink_patpern_list[id].wait));
-
-        //send alive msg on idle
-        if (id == PTRN_ID_IDLE) {
-            //mqttPublishQueue(MQTT_GATEWAY_PATH MQTT_ALIVE, getTimeStr());
-        }
-
-        for (int i = 0; i < blink_patpern_list[id].cnt; i++) {
-            gpio_set_level(STATUS_LED, 1);
-            vTaskDelay(pdMS_TO_TICKS(blink_patpern_list[id].on_time));
-            gpio_set_level(STATUS_LED, 0);
-            vTaskDelay(pdMS_TO_TICKS(blink_patpern_list[id].off_time));
-        }
-    }
-}
-
-/** @brief Sync time every 10 hours */
-void sntpTask (void *args) {
-    static const char* TAG = "SNTP Task";
-
-    mqttLog("SNTP sync task started");
-
-    while(true) {
-        sntp_sync_time(NULL);
-        ESP_LOGI(TAG, "Time synced.");
-        mqttLog("Time synced", MQTT_SEVERITY_INFO);
-        vTaskDelay(pdMS_TO_TICKS(36000000));
+        gpio_set_level(STATUS_LED, 1);
+        vTaskDelay(pdMS_TO_TICKS(100));
+        gpio_set_level(STATUS_LED, 0);
+        mqttPublishQueue(CONCATENATE(MQTT_GATEWAY_PATH, MQTT_ALIVE), getTimeStr());
+        vTaskDelayUntil(&last_wakeup, pdMS_TO_TICKS(15000))
     }
 }
 
@@ -1385,7 +1287,10 @@ void pingTask(void *args) {
     uint8_t destination = *(uint8_t *) args;
     std::string result;
     uint8_t ret = tm.buildPacket(&packet, destination, tm.lcg(), TM_MSG_PING);
-    IF_X_TRUE(ret, 8, "Failed to build ping packet", vTaskDelete(NULL););
+    if (ret) {
+        ESP_LOGE(TAG, "Failed to build ping packet: %d", ret);
+        vTaskDelete(NULL);
+    }
 
     //send packet
     sendPacket(packet, &ping_queue);
@@ -1433,12 +1338,10 @@ void defaultResponseTask(void *args) {
 extern "C" void app_main() {
     static const char* TAG = "main";
 
-    //configure all gpio pins
-    gpioInit();
+    gpioInit(); //configure all gpio pins
 
-    //create default led task
-    xTaskCreate(ledStatusTask, "stat", 1800, nullptr, 99, &led_task_handle);
-    xTaskNotify(led_task_handle, PTRN_ID_INIT, eSetValueWithOverwrite);
+    //create default alive task
+    xTaskCreate(aliveTask, "alive", 512, nullptr, 99, &led_task_handle);
 
     //initialize nvs partition
     auto ret = nvs_flash_init();
@@ -1456,41 +1359,20 @@ extern "C" void app_main() {
     //create default even loop
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-
-    //configure and connect to wifi
-    wifiInit();
-
-    //initialize SNTP and sync with NTP server
-    sntpInit();
-    xTaskCreate(sntpTask, "SNTPTask", 2048, nullptr, 1, &sntp_task_handle);
-
-    //configure and subscribe to mqtt server
-    mqttInit();
+    spiInit();  //configure and initialize spi
+    wifiInit(); //configure and connect to wifi
+    sntpInit(); //initialize sntp and start hourly sync
+    mqttInit(); //configure and subscribe to mqtt server
     xTaskCreate(mqttTask, "MQTTTask", 8192, nullptr, 5, &mqtt_task_handle);
 
 
     //create default response task for handling incoming packets
     xTaskCreate(defaultResponseTask, "response", 4096, nullptr, 10, &default_response_task_handle);
 
-    //configure and initialize spi
-    spiInit();
-
-
-    //configure installed interface modules
-    configureLora(&lora_434, 434.0, 0x12, 8, LORA_BANDWIDTH_125kHz, LORA_SPREADING_FACTOR_9, LORA_CODING_RATE_4_7);
-    configureLora(&lora_868, 868.0, 0x24, 8, LORA_BANDWIDTH_125kHz, LORA_SPREADING_FACTOR_9, LORA_CODING_RATE_4_7);
-
-
-    uint8_t freq[3] = {0};
-    lora_434.readRegistersBurst(REG_FRF_MSB, freq, 3);
-    ESP_LOGI(TAG, "434 freq: 0x%02X%02X%02X", freq[0], freq[1], freq[2]);
-    memset(freq, 0, 3);
-    lora_868.readRegistersBurst(REG_FRF_MSB, freq, 3);
-    ESP_LOGI(TAG, "868 freq: 0x%02X%02X%02X", freq[0], freq[1], freq[2]);
-
 
     //configure radios
-    //lora_868.setMode(SX127X_OP_MODE_SLEEP);
+    configureLora(&lora_434, 434.0, 0x12, 8, LORA_BANDWIDTH_125kHz, LORA_SPREADING_FACTOR_9, LORA_CODING_RATE_4_7);
+    configureLora(&lora_868, 868.0, 0x24, 8, LORA_BANDWIDTH_125kHz, LORA_SPREADING_FACTOR_9, LORA_CODING_RATE_4_7);
     lora868_it.startReception();
     lora434_it.startReception();
 
@@ -1507,17 +1389,15 @@ extern "C" void app_main() {
     this_node.interface_cnt = INTERFACE_COUNT;
     this_node.node_type = tm.getNodeType();
     node_map.insert({this_node.address, this_node});
-    mqttPublishQueue(CONCATENATE(MQTT_GATEWAY_PATH, MQTT_STATUS), "ok");
+    mqttPublishQueue(CONCATENATE(MQTT_GATEWAY_PATH, MQTT_STATUS), "OK");
 
 
-    xTaskNotify(led_task_handle, PTRN_ID_IDLE, eSetValueWithOverwrite);
-    printf("----------------------------------------------------------------------------------------\n");
-
-
-    uint32_t timer = 0;
+    /*----(MAIN LOOP)----*/
     packet_t packet;
-    uint8_t i = 1;
+    uint8_t ret;
+    uint8_t len;
     while(true) {
+        //go through interfaces and check for new data
         for (size_t i = 0; i < INTERFACE_COUNT; i++) {
             //no data -> continue
             if (interfaces[i] == nullptr || !(interfaces[i]->hasData()))
@@ -1525,8 +1405,7 @@ extern "C" void app_main() {
 
             ESP_LOGI(TAG, "Got data on interface %d (%d)", interfaces[i]->getType(), i);
 
-            uint8_t len;
-            uint16_t ret = interfaces[i]->getData(packet.raw, &len);
+            ret = interfaces[i]->getData(packet.raw, &len);
             if (ret) {
                 ESP_LOGW(TAG, "Interface getData error");
                 mqttLog("Failed to get data from interface " + interfaces[i]->getType(), MQTT_SEVERITY_ERROR);
@@ -1544,7 +1423,6 @@ extern "C" void app_main() {
             printPacket(packet);
 
             ret = tm.checkPacket(&packet); //check packets relation to gateway
-
 
             if (ret & TM_PACKET_DUPLICATE) {
                 ESP_LOGE(TAG, "Duplicate packet from %s", std::to_string(packet.fields.source).c_str());
@@ -1575,7 +1453,7 @@ extern "C" void app_main() {
             }
 
             //forward the message
-            if (ret & TM_PACKET_FORWARD && !(tm.getBits(packet.fields.flags, TM_MSG_TYPE_MSB, TM_MSG_TYPE_LSB)== TM_MSG_REGISTER)) {
+            if (ret & TM_PACKET_FORWARD && !(tm.getBits(packet.fields.flags, TM_MSG_TYPE_MSB, TM_MSG_TYPE_LSB) == TM_MSG_REGISTER)) {
                 ESP_LOGI(TAG, "Packet is to be forwarded");
                 sendPacket(packet);
             }
@@ -1583,10 +1461,9 @@ extern "C" void app_main() {
 
         if (tm.clearSentQueue()) {
             ESP_LOGD(TAG, "Removed stale packets");
-            //also clear request queue
             request_queue.clear();
         }
 
-        //vTaskDelay(pdMS_TO_TICKS(1));
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
 }
