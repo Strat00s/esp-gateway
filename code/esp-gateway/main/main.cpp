@@ -282,7 +282,7 @@ void handleCommands(std::string command);
 uint8_t sendDataOnInterface(interfaceWrapper *it, uint8_t *data, uint8_t len);
 void sendPacket(packet_t packet, SimpleQueue<packet_t> *queue = &default_response_q);
 void handleAnswer(packet_t packet, interfaceWrapper *interface);
-void handleRequest(packet_t packet, interfaceWrapper *interface);
+void handleRequest(packet_t packet, interfaceWrapper *interface, bool repeat = false);
 void ledStatusTask(void *args);
 void sntpTask (void *args);
 void mqttTask(void *args);
@@ -367,6 +367,7 @@ void printPacket(packet_t packet) {
     printf("Version:             %d\n", packet.fields.version);
     printf("Node type:           %d\n", tm.getBits(packet.fields.flags, TM_NODE_TYPE_MSB, TM_NODE_TYPE_LSB));
     printf("Message id:          %d\n", tm.getMessageId(&packet));
+    printf("Repeat count:        %d\n", tm.getBits(packet.fields.flags, TM_RPT_CNT_MSB, TM_RPT_CNT_LSB));
     printf("Source address:      %d\n", packet.fields.source);
     printf("Destination address: %d\n", packet.fields.destination);
     printf("Message type:        %d\n", tm.getBits(packet.fields.flags, TM_MSG_TYPE_MSB, TM_MSG_TYPE_LSB));
@@ -494,30 +495,21 @@ void mqttPublishQueue(std::string topic, std::string data, uint32_t timeout) {
 void mqttLog(std::string msg, uint8_t severity, uint32_t timeout) {
     std::string data = getTimeStr();
 
-    if (severity == MQTT_SEVERITY_SUCC) {
-        data += " [ OK ] " + msg;
-        mqttPublishQueue(CONCATENATE(MQTT_GATEWAY_PATH, MQTT_LOG "/[ OK ]"), data, timeout);
+    switch (severity) {
+        case MQTT_SEVERITY_SUCC:    data += " [ OK ] " + msg; break;
+        case MQTT_SEVERITY_INFO:    data += " [INFO] " + msg; break;
+        case MQTT_SEVERITY_WARNING: data += " [WARN] " + msg; break;
+        default:                    data += " [FAIL] " + msg; break;
     }
-    else if (severity == MQTT_SEVERITY_INFO) {
-        data += " [INFO] " + msg;
-        mqttPublishQueue(CONCATENATE(MQTT_GATEWAY_PATH, MQTT_LOG "/[INFO]"), data, timeout);
-    }
-    else if (severity == MQTT_SEVERITY_WARNING) {
-        data += " [WARN] " + msg;
-        mqttPublishQueue(CONCATENATE(MQTT_GATEWAY_PATH, MQTT_LOG "/[WARN]"), data, timeout);
-    }
-    else {
-        data += " [FAIL] " + msg;
-        mqttPublishQueue(CONCATENATE(MQTT_GATEWAY_PATH, MQTT_LOG "/[FAIL]"), data, timeout);
-    }
-
     mqttPublishQueue(CONCATENATE(MQTT_GATEWAY_PATH,MQTT_LOG), data, timeout);
 }
 
 void mqttLogMessage(packet_t packet) {
     if (packet.fields.source == TM_DEFAULT_ADDRESS)
         return;
-    std::string node_path = MQTT_NODES_PATH "/" + std::to_string(packet.fields.source); //mqtt node path
+
+    std::string node_path = MQTT_NODES_PATH "/" + std::to_string(packet.fields.source);
+
     mqttPublishQueue(node_path + MQTT_ALIVE, getTimeStr()); //node is alive
     mqttPublishQueue(node_path + MQTT_LAST_PACKET, packet2json(packet));
 }
@@ -705,12 +697,12 @@ static void eventLoopHandler(void* arg, esp_event_base_t event_base, int32_t eve
             case MQTT_EVENT_DISCONNECTED: ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED");                           break;
             case MQTT_EVENT_SUBSCRIBED:   ESP_LOGI(TAG, "MQTT_EVENT_SUBSCRIBED, msg_id=%d", event->msg_id);   break;
             case MQTT_EVENT_UNSUBSCRIBED: ESP_LOGI(TAG, "MQTT_EVENT_UNSUBSCRIBED, msg_id=%d", event->msg_id); break;
-            case MQTT_EVENT_PUBLISHED:    ESP_LOGI(TAG, "MQTT_EVENT_PUBLISHED, msg_id=%d", event->msg_id);    break;
+            case MQTT_EVENT_PUBLISHED:    break; //ESP_LOGI(TAG, "MQTT_EVENT_PUBLISHED, msg_id=%d", event->msg_id);    break;
 
             case MQTT_EVENT_DATA: {
-                ESP_LOGI(TAG, "MQTT_EVENT_DATA");
-                ESP_LOGI(TAG, "TOPIC=%.*s", event->topic_len, event->topic);
-                ESP_LOGI(TAG, "DATA=%.*s", event->data_len, event->data);
+                //ESP_LOGI(TAG, "MQTT_EVENT_DATA");
+                //ESP_LOGI(TAG, "TOPIC=%.*s", event->topic_len, event->topic);
+                //ESP_LOGI(TAG, "DATA=%.*s", event->data_len, event->data);
                 mqtt_queue_data_t data = {
                     .topic = std::string(event->topic, event->topic_len),
                     .message = std::string(event->data, event->data_len),
@@ -1075,7 +1067,7 @@ void sendPacket(packet_t packet, SimpleQueue<packet_t> *queue) {
     request_queue.insert({tmp, queue});
 
     ESP_LOGI(TAG, "Packet sent succesfully");
-    mqttLog("Packet sent to " + std::to_string(packet.fields.destination));
+    //mqttLog("Packet sent to " + std::to_string(packet.fields.destination));
     mqttLogMessage(packet);
 }
 
@@ -1107,7 +1099,7 @@ void handleAnswer(packet_t packet, interfaceWrapper *interface) {
  * @param packet 
  * @param  
  */
-void handleRequest(packet_t packet, interfaceWrapper *interface) {
+void handleRequest(packet_t packet, interfaceWrapper *interface, bool repeat) {
     static const char* TAG = "HANDLE REQUEST";
 
     std::string node_path = MQTT_NODES_PATH "/" + std::to_string(packet.fields.source); //mqtt node path
@@ -1135,18 +1127,6 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
             mqttPublishQueue(node_path + MQTT_STATUS, " ");
             mqttPublishQueue(node_path + MQTT_ALIVE, " ");
         }
-        //update node information
-        //TODO
-        //else {
-        //    node_info_t node = search->second;
-        //    for (int i = 0; i < node.interface_cnt; i++) {
-        //        if (node.interfaces[i] == interface)
-        //            continue;
-        //        node.interfaces[node.interface_cnt] = interface;
-        //        node.interface_cnt++;
-        //    }
-        //    node_map[node.address] = node;
-        //}
     }
 
     uint8_t ret;
@@ -1234,6 +1214,13 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
                 uint8_t data = TM_ERR_SERVICE_UNHANDLED;
                 tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_ERR, &data, 1, rpt_cnt);
                 sendPacket(packet);
+            }
+
+            //don't handle anything if already handled
+            if (repeat) {
+                tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_OK, nullptr, 0, rpt_cnt);
+                sendPacket(packet);
+                break;
             }
 
             //find node and build sensor path
@@ -1324,7 +1311,7 @@ void ledStatusTask(void *args) {
 
         //send alive msg on idle
         if (id == PTRN_ID_IDLE) {
-            mqttPublishQueue(MQTT_GATEWAY_PATH MQTT_ALIVE, getTimeStr());
+            //mqttPublishQueue(MQTT_GATEWAY_PATH MQTT_ALIVE, getTimeStr());
         }
 
         for (int i = 0; i < blink_patpern_list[id].cnt; i++) {
@@ -1354,9 +1341,9 @@ void sntpTask (void *args) {
 void mqttTask(void *args) {
     static const char* TAG = "MQTT Task";
 
-    ESP_LOGI(TAG, "MQTT task started");
-    ESP_LOGI(TAG, "MQTT queue: %d", mqtt_data_queue.size());
-    mqttLog("MQTT publish task started");
+    //ESP_LOGI(TAG, "MQTT task started");
+    //ESP_LOGI(TAG, "MQTT queue: %d", mqtt_data_queue.size());
+    mqttLog("MQTT task started");
 
     mqtt_queue_data_t data;
 
@@ -1368,13 +1355,13 @@ void mqttTask(void *args) {
 
         //publish message
         if (data.publish) {
-            ESP_LOGI(TAG, "Queued publish message:\n\t%s: %s", data.topic.c_str(), data.message.c_str());
+            //ESP_LOGI(TAG, "Queued publish message:\n\t%s: %s", data.topic.c_str(), data.message.c_str());
             esp_mqtt_client_publish(mqtt_client, data.topic.c_str(), data.message.c_str(), 0, 1, 1);
             continue;
         }
 
         //receive message
-        ESP_LOGI(TAG, "Queued received message:\n\t%s: %s", data.topic.c_str(), data.message.c_str());
+        //ESP_LOGI(TAG, "Queued received message:\n\t%s: %s", data.topic.c_str(), data.message.c_str());
 
         if (data.topic.contains("CMD")) {
             handleCommands(data.message);
@@ -1421,7 +1408,7 @@ void pingTask(void *args) {
     vTaskDelete(NULL);
 }
 
-/** @brief Default response task for "handling" all responses without custom queues
+/** @brief Default response task for "handling" all responses without custom queues (there shouldn't be any)
  * 
  * @param args 
  */
@@ -1438,7 +1425,6 @@ void defaultResponseTask(void *args) {
         
         ESP_LOGI(TAG, "Got response:\n");
         printPacket(packet);
-        mqttLog("Got response from " + std::to_string(packet.fields.source));
         vTaskDelay(100);
     }
 }
@@ -1554,46 +1540,38 @@ extern "C" void app_main() {
                 continue;
             }
 
+            printf("Received packet:\n");
+            printPacket(packet);
+
             ret = tm.checkPacket(&packet); //check packets relation to gateway
 
 
             if (ret & TM_PACKET_DUPLICATE) {
-                ESP_LOGI(TAG, "Duplicate packet");
-                mqttLog("Received duplicate packet from " + std::to_string(packet.fields.source), MQTT_SEVERITY_WARNING);
+                ESP_LOGE(TAG, "Duplicate packet from %s", std::to_string(packet.fields.source).c_str());
                 continue;
             }
 
             mqttLogMessage(packet); //log the message to the node
 
             //repeat packet that is to be forwarded
-            if (ret & TM_PACKET_REPEAT) {
-                if (ret & TM_PACKET_FORWARD) {
-                    ESP_LOGI(TAG, "Packet is a repeat and is to be forwarded");
-                    sendPacket(packet);
-                    continue;
-                }
-                ESP_LOGI(TAG, "Packet is a repeat and was already handled");
-                continue;
-            }
+            if (ret & TM_PACKET_REPEAT)
+                ESP_LOGI(TAG, "Packet is a repeat");
 
             if (ret & TM_PACKET_RND_RESPONSE) {
                 ESP_LOGW(TAG, "Random response");
-                mqttLog("Random response from " + std::to_string(packet.fields.source), MQTT_SEVERITY_WARNING);
                 continue;
             }
 
             //handle response
             if (ret & TM_PACKET_RESPONSE) {
                 ESP_LOGI(TAG, "Packet is a response");
-                mqttLog("Response from " + std::to_string(packet.fields.source));
                 handleAnswer(packet, interfaces[i]);
             }
 
             //handle new request
             if (ret & TM_PACKET_REQUEST) {
                 ESP_LOGI(TAG, "Packet is a request");
-                mqttLog("Request from " + std::to_string(packet.fields.source));
-                handleRequest(packet, interfaces[i]);
+                handleRequest(packet, interfaces[i], ret & TM_PACKET_REPEAT);
             }
 
             //forward the message
@@ -1604,7 +1582,7 @@ extern "C" void app_main() {
         }
 
         if (tm.clearSentQueue()) {
-            ESP_LOGI(TAG, "Removed stale packets");
+            ESP_LOGD(TAG, "Removed stale packets");
             //also clear request queue
             request_queue.clear();
         }
