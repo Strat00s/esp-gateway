@@ -29,9 +29,11 @@ void TinyMesh::setSeed(uint16_t seed) {
     lcg(seed);
 }
 
+#ifndef ARDUINO
 void TinyMesh::registerMillis(unsigned long (*millis)()) {
     this->millis = millis;
 }
+#endif
 
 
 void TinyMesh::setVersion(uint8_t version) {
@@ -104,8 +106,11 @@ uint8_t TinyMesh::buildPacket(packet_t *packet, uint8_t destination, uint16_t me
     ret |= checkHeader(packet);
 
     //return now if there are no data to copy
-    if (!length)
+    if (!length) {
+        if (!ret)
+            savePacket(packet);
         return ret;
+    }
 
     //data are null, but some are to be copied -> don't copy anything
     if (data == nullptr && length != 0)
@@ -120,7 +125,6 @@ uint8_t TinyMesh::buildPacket(packet_t *packet, uint8_t destination, uint16_t me
 
     if (!ret)
         savePacket(packet);
-
     return ret;
 }
 
@@ -204,76 +208,54 @@ uint8_t TinyMesh::checkHeader(packet_t *packet) {
 uint8_t TinyMesh::checkPacket(packet_t *packet) {
     uint8_t ret = TM_OK;
     //if packet is in sent queue, it is a duplicate packet
-    packet_id_t packet_id = createPacketID(packet);
-    for (auto &spid : this->sent_queue) {
-        if (arrayValCmp(spid.raw, 0, 5))
-            continue;
+    packet_id_t pid = createPacketID(packet);
+    if (isDuplicate(packet))
+        return TM_PACKET_DUPLICATE;
 
-        if (ARRAY_CMP(spid.raw, packet_id.raw, 4)) {
-            //packet is a repeated sent
-            if (packet_id.fields.repeat > spid.fields.repeat) {
-                spid.fields.repeat = packet_id.fields.repeat; //edit the packet repeat counter
-                last_msg_time = millis(); //update timer
-                ret |= TM_PACKET_REPEAT;
-                break;
-            }
+    //save the packet (update if repeat)
+    savePacket(packet);
 
-            return TM_PACKET_DUPLICATE;
-        }
+    //broadcast packet
+    if (pid.fields.destination == TM_BROADCAST_ADDRESS)
+        ret |= TM_PACKET_FORWARD;
+
+    //not a broadcast and is not for us -> simple forward
+    else if (pid.fields.destination != this->address) {
+        return TM_PACKET_FORWARD;
     }
 
 
-    //not for us nor broadcast
-    if (packet_id.fields.destination != this->address && packet_id.fields.destination != TM_BROADCAST_ADDRESS) {
-        savePacket(packet);
-        return ret | TM_PACKET_FORWARD;
-    }
-
-    //go through saved packets and find if this is a response
-    packet_id = createPacketID((uint32_t)packet->fields.destination, (uint32_t)packet->fields.source, getMessageId(packet) - 1, packet->fields.flags);
+    //create original request id
+    packet_id_t rid = createPacketID(packet->fields.destination, packet->fields.source, getMessageId(packet) - 1, 0);
+    //go through saved packets and find if this packet is a response to the request
     for (auto spid : this->sent_queue) {
-        if (arrayValCmp(spid.raw, 0, 4))
-            continue;
-
         //packet is a response to something from us || if request was a brodcast, don't care about who sent it
-        packet_id_t tmp = packet_id;
-        tmp.fields.destination = 0xFF;
-        if (ARRAY_CMP(spid.raw, packet_id.raw, 4) || ARRAY_CMP(spid.raw, tmp.raw, 4)) {
-            savePacket(packet);
+        packet_id_t br_rid = rid; //create broadcast request id
+        br_rid.fields.destination = 0xFF;
+        if (ARRAY_CMP(spid.raw, rid.raw, 4) || ARRAY_CMP(spid.raw, br_rid.raw, 4)) {
             return ret | TM_PACKET_RESPONSE;
         }
     }
 
     //packet is not a response to anything from us, but still is a response -> random response
     uint8_t type = getBits(packet->fields.flags, TM_MSG_TYPE_MSB, TM_MSG_TYPE_LSB);
-    if (packet_id.fields.destination == this->address && (type == TM_MSG_OK || type == TM_MSG_ERR)) {
-        savePacket(packet);
+    if (pid.fields.destination == this->address && (type == TM_MSG_OK || type == TM_MSG_ERR))
         return ret | TM_PACKET_RND_RESPONSE;
-    }
-    
-    //packet is a brodcast request
-    if (packet_id.fields.destination == TM_BROADCAST_ADDRESS) {
-        savePacket(packet);
-        return ret | TM_PACKET_FORWARD | TM_PACKET_REQUEST;
-    }
 
-    //anything else is just a normal request
-    savePacket(packet);
+
+    //anything else is a request
     return ret | TM_PACKET_REQUEST;
 }
 
 void TinyMesh::savePacketID(packet_id_t packet_id) {
-    //add repeated packet (also skip repeated saves)
+    //edit repeat packet (also skip repeated saves)
     for (auto &spid : this->sent_queue) {
-        if (arrayValCmp(spid.raw, 0, 5))
-            continue;
-
+        //same packet id
         if (ARRAY_CMP(spid.raw, packet_id.raw, 4)) {
-            //if packet is a repeat
+            //repeat has increased -> update packet
             if (packet_id.fields.repeat > spid.fields.repeat) {
                 spid.fields.repeat = packet_id.fields.repeat; //edit the packet repeat counter
                 last_msg_time = millis(); //update save time
-                return;
             }
             return;
         }

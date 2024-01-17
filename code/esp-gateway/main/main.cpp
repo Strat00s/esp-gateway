@@ -407,10 +407,11 @@ std::string packetData2str(packet_t packet) {
 //convert packet into a json string
 std::string packet2json(packet_t packet) {
     std::string result = "{";
-    result += "\"version\": "     + std::to_string(packet.fields.version)     + ",";
-    result += "\"source\": "      + std::to_string(packet.fields.source)      + ",";
-    result += "\"destination\": " + std::to_string(packet.fields.destination) + ",";
-    result += "\"message id\": "  + std::to_string(tm.getMessageId(&packet))  + ",";
+    result += "\"version\": "      + std::to_string(packet.fields.version)     + ",";
+    result += "\"source\": "       + std::to_string(packet.fields.source)      + ",";
+    result += "\"destination\": "  + std::to_string(packet.fields.destination) + ",";
+    result += "\"message id\": "   + std::to_string(tm.getMessageId(&packet))  + ",";
+    result += "\"repeate cnt\": "  + std::to_string(tm.getBits(packet.fields.flags, TM_RPT_CNT_MSB, TM_RPT_CNT_LSB))  + ",";
     result += "\"node type\": ";
     switch (tm.getBits(packet.fields.flags, TM_NODE_TYPE_MSB, TM_NODE_TYPE_LSB)) {
         case TM_NODE_TYPE_GATEWAY: result += "\"gateway\",";        break;
@@ -1149,6 +1150,7 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
     }
 
     uint8_t ret;
+    uint8_t rpt_cnt = tm.getBits(packet.fields.flags, TM_RPT_CNT_MSB, TM_RPT_CNT_LSB);
     switch (tm.getBits(packet.fields.flags, TM_MSG_TYPE_MSB, TM_MSG_TYPE_LSB)) {
         case TM_MSG_REGISTER: {
             ESP_LOGI(TAG, "Sending response to register");
@@ -1171,10 +1173,10 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
             uint16_t ret = 0;
             if (!new_address) {
                 uint8_t data = TM_ERR_ADDRESS_LIMIT;
-                ret = tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_ERR, &data, 1);
+                ret = tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_ERR, &data, 1, rpt_cnt);
             }
             else
-                ret = tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_OK, &new_address, 1);
+                ret = tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_OK, &new_address, 1, rpt_cnt);
 
             IF_X_TRUE(ret, 8, "Failed to create response: ", break);
             sendPacket(packet);
@@ -1183,7 +1185,7 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
 
         case TM_MSG_PING: {
             ESP_LOGI(TAG, "Sending response to ping");
-            ret = tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_OK, nullptr, 0);
+            ret = tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_OK, nullptr, 0, rpt_cnt);
             IF_X_TRUE(ret, 16, "Failed to create response: ", break);
             sendPacket(packet);
             break;
@@ -1193,7 +1195,7 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
             ESP_LOGI(TAG, "Sending response to status");
             mqttPublishQueue(node_path + MQTT_STATUS, packetData2str(packet));
             uint8_t str[] = "OK";
-            ret = tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_OK, str, 2);
+            ret = tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_OK, str, 2, rpt_cnt);
             IF_X_TRUE(ret, 8, "Failed to create response: ", break);
             sendPacket(packet);
             mqttPublishQueue(node_path + MQTT_STATUS, std::string((char*)packet.fields.data, packet.fields.data_length));
@@ -1203,7 +1205,7 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
         case TM_MSG_COMBINED: {
             ESP_LOGI(TAG, "Sending response to combined");
             //TODO parse...
-            ret = tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_OK);
+            ret = tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_OK, nullptr, 0, rpt_cnt);
             IF_X_TRUE(ret, 8, "Failed to create response: ", break);
             sendPacket(packet);
             break;
@@ -1230,7 +1232,7 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
 
             if (packet.fields.data[0] != 'N' || packet.fields.data[1] != 'D') {
                 uint8_t data = TM_ERR_SERVICE_UNHANDLED;
-                tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_ERR, &data, 1);
+                tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_ERR, &data, 1, rpt_cnt);
                 sendPacket(packet);
             }
 
@@ -1292,7 +1294,7 @@ void handleRequest(packet_t packet, interfaceWrapper *interface) {
                 }
             }
 
-            tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_OK);
+            tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_OK, nullptr, 0, rpt_cnt);
             sendPacket(packet);
             break;
         }

@@ -11,6 +11,10 @@
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
+#include <string.h>
+#ifdef ARDUINO
+#include <Arduino.h>
+#endif
 
 
 /*# Packet structure
@@ -156,6 +160,8 @@
 #define TM_PACKET_FORWARD      0b00010000
 #define TM_PACKET_REPEAT       0b00100000
 
+#define TM_MAX_REPEAT 0b11
+
 /*----(MESSAGE TYPES)----*/
 #define TM_MSG_OK       0b0000 //response can't be brodcast
 #define TM_MSG_ERR      0b0001 //response can't be brodcast
@@ -231,7 +237,9 @@ private:
     packet_id_t sent_queue[TM_SENT_QUEUE_SIZE] = {0};
     uint32_t last_msg_time                 = 0;
 
+  #ifndef ARDUINO
     unsigned long (*millis)() = nullptr;
+  #endif
 
     /** @brief Compare len items in array against a specific value*/
     template<typename T1, typename T2>
@@ -241,6 +249,15 @@ private:
                 return false;
         }
         return true;
+    }
+
+    bool isDuplicate(packet_t *packet) {
+        packet_id_t pid = createPacketID(packet);
+        for (auto &spid : this->sent_queue) {
+            if (ARRAY_CMP(spid.raw, pid.raw, 5))
+                return true;
+        }
+        return false;
     }
 
 public:
@@ -263,6 +280,7 @@ public:
     ~TinyMesh();
 
 
+  #ifndef ARDUINO
     /** @brief Register time keeping function for creating timestamps for packets.
      * It is expected that this function returns time in milliseconds between individual calls of this function.
      * If other time unit is used, edit TM_TIME_TO_STALE macro (or redefine it).
@@ -270,6 +288,7 @@ public:
      * @param millis Function pointer to function returning milliseconds since boot
      */
     void registerMillis(unsigned long (*millis)());
+  #endif
 
     void setSeed(uint16_t seed = 42069);
 
@@ -402,14 +421,7 @@ public:
         *x = (*x & ~mask) | ((val << lsb) & mask);
     }
 
-    /** @brief Get specific bits from x shifted to start from 1st lsb bit
-     * 
-     * @tparam T 
-     * @param x 
-     * @param msb 
-     * @param lsb 
-     * @return 
-     */
+    /** @brief Get specific bits from x shifted to start from 1st (lsb) bit*/
     template<typename T>
     T getBits(T x, uint8_t msb, uint8_t lsb) {
         return (x >> lsb) & (((T)1 << (msb - lsb + 1)) - 1);
