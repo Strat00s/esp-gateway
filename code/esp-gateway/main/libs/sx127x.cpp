@@ -5,7 +5,7 @@
  * @version 0.2
  * @date 30-08-2023
  * 
- * @copyright Copyright (c) 2023
+ * inspired by: https://github.com/jgromes/RadioLib
  * 
  */
 

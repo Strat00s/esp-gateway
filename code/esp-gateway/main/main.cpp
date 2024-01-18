@@ -62,6 +62,15 @@
 #include "libs/interfaces/mqttInterfaceWrapper.hpp"
 #include "creds.h"
 
+
+/*----(CONFIGURATION)----*/
+//comment out creds.h and configure your wifi and mqtt here
+#ifndef HIDDEN_CREDS
+#define WIFI_SSID "YOUR_WIFI_SSID"
+#define WIFI_PASS "YOUR_WIFI_PASSWD"
+#define MQTT_URI  "YOUR_MQTTT_URI"
+#endif
+
 /*----(FUNCTION MACORS)----*/
 #define STRINGIFY(x) #x
 #define TOSTRING(x) STRINGIFY(x)
@@ -115,8 +124,8 @@
 
 /*----(WiFi config)----*/
 //wifi config
-#define WIFI_SSID TEST_WIFI_SSID
-#define WIFI_PASS TEST_WIFI_PASS
+//#define WIFI_SSID TEST_WIFI_SSID
+//#define WIFI_PASS TEST_WIFI_PASS
 #define WIFI_MAXIMUM_RETRY  5
 #define WIFI_CONNECTED_BIT  BIT0
 #define WIFI_FAIL_BIT       BIT1
