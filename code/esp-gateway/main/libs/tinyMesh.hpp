@@ -1,7 +1,7 @@
 /** @file tinyMesh.hpp
  * @author Lukáš Baštýř (l.bastyr@seznam.cz, 492875)
  * @brief TinyMesh is a simple protocol for IoT devices.
- * @version 1.2
+ * @version 1.5
  * @date 27-11-2023
  * 
  * @copyright Copyright (c) 2023
@@ -12,6 +12,8 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
+#include <deque>
+
 #ifdef ARDUINO
 #include <Arduino.h>
 #endif
@@ -121,8 +123,6 @@
         DATA LENGTH         l
         DATA...             CUSTOM (l bytes)
 */
-//TODO save only here
-//TODO fix flags...
 
 
 #define TM_VERSION 1
@@ -225,6 +225,7 @@ typedef union {
         uint8_t repeat;
     } fields;
     uint8_t raw[5];
+    uint16_t timer;
 } packet_id_t;
 
 
@@ -234,8 +235,9 @@ private:
     uint8_t address                        = TM_DEFAULT_ADDRESS;   //this NODE address
     uint8_t gateway                        = TM_BROADCAST_ADDRESS; //gateway address
     uint8_t node_type                      = TM_NODE_TYPE_NODE;   //this NODE type
-    packet_id_t sent_queue[TM_SENT_QUEUE_SIZE] = {0};
-    uint32_t last_msg_time                 = 0;
+
+    std::deque<packet_id_t> handled_queue;
+    uint32_t last_msg_time = 0;
 
   #ifndef ARDUINO
     unsigned long (*millis)() = nullptr;
@@ -251,17 +253,7 @@ private:
         return true;
     }
 
-    bool isDuplicate(packet_t *packet) {
-        packet_id_t pid = createPacketID(packet);
-        for (auto &spid : this->sent_queue) {
-            if (ARRAY_CMP(spid.raw, pid.raw, 5))
-                return true;
-        }
-        return false;
-    }
-
 public:
-
     /** @brief Create TinyMesh instance.
      * The class containes a simple LCG for pseudo random message ID generation where the seed is used.
      * @param node_type Node type
@@ -394,11 +386,14 @@ public:
      */
     void savePacket(packet_t *packet);
 
-    /** @brief Clear queue of received/transmitted messages.*/
-    uint8_t clearSentQueue(bool force = false);
+    /** @brief Force clear queue of received/transmitted messages.*/
+    uint8_t clearSentQueue();
 
     packet_id_t createPacketID(packet_t *packet);
     packet_id_t createPacketID(uint8_t source, uint8_t destination, uint16_t message_id, uint8_t repeat_cnt);
+
+    void updateTimers();
+    void loop();
 
 
     uint16_t lcg(uint16_t seed = 0);

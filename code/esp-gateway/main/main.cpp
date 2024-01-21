@@ -61,6 +61,7 @@
 #include "libs/interfaces/sx127xInterfaceWrapper.hpp"
 #include "libs/interfaces/mqttInterfaceWrapper.hpp"
 #include "creds.h"
+//#include "libs/containers/tinyQueue.hpp"
 
 
 /*----(CONFIGURATION)----*/
@@ -1467,10 +1468,7 @@ extern "C" void app_main() {
             }
         }
 
-        if (tm.clearSentQueue()) {
-            ESP_LOGD(TAG, "Removed stale packets");
-            request_queue.clear();
-        }
+        tm.loop();
 
         vTaskDelay(pdMS_TO_TICKS(1));
     }

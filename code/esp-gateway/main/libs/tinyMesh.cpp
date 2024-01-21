@@ -1,7 +1,7 @@
 /** @file tinyMesh.cpp
  * @author Lukáš Baštýř (l.bastyr@seznam.cz, 492875)
  * @brief TinyMesh is a simple protocol for IoT devices.
- * @version 0.1
+ * @version 1.5
  * @date 27-11-2023
  * 
  * @copyright Copyright (c) 2023
@@ -209,8 +209,7 @@ uint8_t TinyMesh::checkPacket(packet_t *packet) {
     uint8_t ret = TM_OK;
     //if packet is in sent queue, it is a duplicate packet
     packet_id_t pid = createPacketID(packet);
-
-    for (auto &spid : this->sent_queue) {
+    for (auto spid : handled_queue) {
         //same packet id
         if (ARRAY_CMP(spid.raw, pid.raw, 4)) {
             //repeat has increased -> update packet
@@ -238,14 +237,13 @@ uint8_t TinyMesh::checkPacket(packet_t *packet) {
     //create original request id
     packet_id_t rid = createPacketID(packet->fields.destination, packet->fields.source, getMessageId(packet) - 1, 0);
     //go through saved packets and find if this packet is a response to the request
-    for (auto spid : this->sent_queue) {
+    for (auto spid : handled_queue) {
         //packet is a response to something from us || if request was a brodcast, don't care about who sent it
         packet_id_t br_rid = rid; //create broadcast request id
         br_rid.fields.destination = 0xFF;
-        if (ARRAY_CMP(spid.raw, rid.raw, 4) || ARRAY_CMP(spid.raw, br_rid.raw, 4)) {
+        if (ARRAY_CMP(spid.raw, rid.raw, 4) || ARRAY_CMP(spid.raw, br_rid.raw, 4))
             return ret | TM_PACKET_RESPONSE;
-        }
-    }
+    };
 
     //packet is not a response to anything from us, but still is a response -> random response
     uint8_t type = getBits(packet->fields.flags, TM_MSG_TYPE_MSB, TM_MSG_TYPE_LSB);
@@ -259,39 +257,47 @@ uint8_t TinyMesh::checkPacket(packet_t *packet) {
 
 void TinyMesh::savePacketID(packet_id_t packet_id) {
     //edit repeat packet (also skip repeated saves)
-    for (auto &spid : this->sent_queue) {
+    auto diff = millis() - last_msg_time;
+    last_msg_time += diff;
+    bool is_dupe = false;
+    for (auto &spid : handled_queue) {
         //same packet id
         if (ARRAY_CMP(spid.raw, packet_id.raw, 4)) {
+            is_dupe = true;
             //repeat has increased -> update packet
             if (packet_id.fields.repeat > spid.fields.repeat) {
                 spid.fields.repeat = packet_id.fields.repeat; //edit the packet repeat counter
-                last_msg_time = millis(); //update save time
+                spid.timer = TM_CLEAR_TIME;
             }
-            return;
+            else
+                spid.timer -= diff;
         }
+        else
+            spid.timer -= diff;
     }
 
-    //shift queue and add new packet_id
-    memmove(this->sent_queue + 1, this->sent_queue, sizeof(this->sent_queue) - sizeof(this->sent_queue[0]));
-    this->sent_queue[0] = packet_id;
-    if (millis != nullptr)
-        last_msg_time = millis();
+    if (!is_dupe) {
+        packet_id.timer = TM_CLEAR_TIME;
+        handled_queue.push_back(packet_id);
+    }
 }
 
 void TinyMesh::savePacket(packet_t *packet) {
     savePacketID(createPacketID(packet));
 }
 
-uint8_t TinyMesh::clearSentQueue(bool force) {
-    //clear on force or once the timer expires
-    if (force || (millis != nullptr && this->last_msg_time + TM_CLEAR_TIME < millis())) {
-        this->last_msg_time = millis == nullptr? 0 : millis();
-        memset(this->sent_queue, 0, sizeof(this->sent_queue));
-        return 1;
+void TinyMesh::loop() {
+    auto diff = millis() - last_msg_time;
+    last_msg_time += diff;
+    for (size_t i = 0; i < handled_queue.size(); ) {
+        if (handled_queue[i].timer > diff) {
+            handled_queue[i].timer -= diff;
+            i++;
+        }
+        else
+            handled_queue.pop_front();
     }
-    return 0;
 }
-
 
 packet_id_t TinyMesh::createPacketID(packet_t *packet) {
     packet_id_t packet_id;
