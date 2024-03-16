@@ -1,10 +1,10 @@
 #pragma once
 #include <stdio.h>
-#include "interfaceWrapper.hpp"
+#include "InterfaceWrapper.hpp"
 #include "libs/sx127x.hpp"
 
 
-class rf443InterfaceWrapper : public interfaceWrapper{
+class rf443InterfaceWrapper : public ifWrapper::InterfaceWrapper{
 private:
     /* data */
 public:

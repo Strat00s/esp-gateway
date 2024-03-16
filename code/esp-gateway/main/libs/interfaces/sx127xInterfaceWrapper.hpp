@@ -1,16 +1,16 @@
 #pragma once
 #include <stdio.h>
-#include "interfaceWrapper.hpp"
+#include "InterfaceWrapper.hpp"
 #include "libs/sx127x.hpp"
 
 
-class sx127xInterfaceWrapper : public interfaceWrapper{
+class sx127xInterfaceWrapper : protected InterfaceWrapper{
 private:
     SX127X *lora;
 
 public:
 
-    sx127xInterfaceWrapper(SX127X *lora) : interfaceWrapper(IW_TYPE_SX127X) {
+    sx127xInterfaceWrapper(SX127X *lora) : InterfaceWrapper(IF_TYPE_SX127X) {
         this->lora = lora;
     }
 
@@ -18,16 +18,17 @@ public:
      * 
      * @param data Data to send/transmit. They will be overwritten by "junk" since the same buffer is used to save returned SPI transaction data.
      * @param len Length of data to be transmitted.
-     * @return 0 on success, LORA ERR_... defines on error.
+     * @return 0 on success. IRQ flags on failure.
      */
-    uint8_t transmitData(uint8_t *data, uint8_t len) {
+    uint8_t sendData(uint8_t *data, uint8_t len) {
         uint8_t ret = lora->transmit(data, len);
         if (ret & IRQ_FLAG_TX_DONE)
             return 0;
-        return 1;   //TODO
+        return ret;
     }
 
-    /** @brief Retrieve data from underlying LORA device. Automatically starts reception if it is terminated by reading data.
+    /** @brief Retrieve data from underlying LORA device.
+     * Automatically starts reception if it is terminated by reading data.
      * 
      * @param buf Buffer to which to copy received data. Must be 256B long (maximal data length).
      * @param len Length of received data.
@@ -64,11 +65,5 @@ public:
      */
     uint8_t hasData() {
         return lora->readRegister(REG_IRQ_FLAGS) & IRQ_FLAG_RX_DONE;
-    }
-
-    uint8_t clearIRQ() {
-        uint8_t tmp = lora->readRegister(REG_IRQ_FLAGS);
-        lora->clearIrqFlags();
-        return tmp;
     }
 };

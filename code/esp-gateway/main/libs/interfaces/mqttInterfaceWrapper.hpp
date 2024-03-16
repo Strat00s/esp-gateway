@@ -1,16 +1,16 @@
 #pragma once
 #include <stdio.h>
-#include "interfaceWrapper.hpp"
+#include "InterfaceWrapper.hpp"
 #include "../containers/simpleQueue.hpp"
 #include <cstring>
 
 
-class mqttInterfaceWrapper : public interfaceWrapper{
+class mqttInterfaceWrapper : public ifWrapper::InterfaceWrapper{
 private:
     SimpleQueue<std::string> in;
 
 public:
-    mqttInterfaceWrapper() : interfaceWrapper(IW_TYPE_MQTT) {};
+    mqttInterfaceWrapper() : InterfaceWrapper(IW_TYPE_MQTT) {};
 
     uint8_t transmitData(uint8_t *data, uint8_t len) {return 1;}
     uint8_t getData(uint8_t *data, uint8_t *len) {

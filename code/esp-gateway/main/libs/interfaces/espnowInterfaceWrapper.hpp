@@ -1,10 +1,10 @@
 #pragma once
 #include <stdio.h>
-#include "interfaceWrapper.hpp"
+#include "InterfaceWrapper.hpp"
 #include "libs/sx127x.hpp"
 
 
-class espnowInterfaceWrapper : public interfaceWrapper{
+class espnowInterfaceWrapper : public ifWrapper::InterfaceWrapper{
 private:
     /* data */
 public:
