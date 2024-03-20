@@ -1,7 +1,7 @@
 /** @file tinyMesh.hpp
  * @author Lukáš Baštýř (l.bastyr@seznam.cz, 492875)
  * @brief TinyMesh is a simple protocol for IoT devices.
- * @version 1.5
+ * @version 3.0
  * @date 27-11-2023
  * 
  * @copyright Copyright (c) 2023
@@ -22,19 +22,21 @@
 /*# Packet structure
 -------------HEADER-------------
     VERSION     8b
+        7-4: RESERVED
+        3-0: VERSION
     SOURCE      8b
     DESTINATION 8b
-    MESSAGE ID  16b
     FLAGS       8b
         7-6: REPEAT CNT
         5-2: MESSAGE TYPE
             0000 = OK
             0001 = ERR
-            0010 = REGISTER
-            0011 = PING
+            0010 = TM_ADDR_REQUEST - request address from gateway in the network (if there is any)
+            0011 = PING - check if node is in the network. Contains hop counter
             0100 = STATUS
             0101 = TM_MSG_COMBINED
-            0110 ... 1110 = RESERVED
+            0110 = TM_MSG_REQUEST - request a specific message from node
+            0111 ... 1110 = RESERVED
             1111 = CUSTOM
         1-0: DEVICE TYPE
             00 = GATEWAY
@@ -45,12 +47,27 @@
 --------------DATA--------------
     DATA...     256b - len(header)
 
+
+
+excahnges???:
+request -> response
+request -> combined response -> response
+
+
+.join function (needs access to interface manager!!!)
+send TM_ADRR_REQUEST
+wait for response
+    use the newly given address
+otherwise, set address to 1 and ping
+    if response, increase address and repeat
+if no response, use that address
+
+
 # Predefined messages packet structure and flow:
     OK
         VERSION
         SOURCE
         DESTINATION
-        MESSAGE ID
         FLAGS
             7-6: REPEAT CNT
             5-2: MESSAGE TYPE: TM_MSG_OK
@@ -61,7 +78,6 @@
         VERSION
         SOURCE
         DESTINATION
-        MESSAGE ID
         FLAGS
             7-6: REPEAT CNT
             5-2: MESSAGE TYPE: TM_MSG_ERR
@@ -72,60 +88,65 @@
         VERSION
         SOURCE
         DESTINATION
-        MESSAGE ID
         FLAGS
             7-6: REPEAT CNT
             5-2: MESSAGE TYPE: TM_MSG_PING
             1-0: DEVICE TYPE
-        DATA LENGTH: 0
-        DATA...
-    REGISTER
+        DATA LENGTH: 1
+        DATA: hop counter increased whenever ping is to be forwarded
+    ADDRESS REQUEST
         VERSION
-        SOURCE
+        SOURCE: 0
         DESTINATION: 255
-        MESSAGE ID
         FLAGS
             7-6: REPEAT CNT
             5-2: MESSAGE TYPE: TM_MSG_REGISTER
             1-0: DEVICE TYPE
         DATA LENGTH: 0
-        DATA...
     STATUS
         VERSION
         SOURCE
         DESTINATION
-        MESSAGE ID
         FLAGS
             7-6: REPEAT CNT
             5-2: MESSAGE TYPE: TM_MSG_STATUS
             1-0: DEVICE TYPE
-        DATA LENGTH: l
-        DATA: string of size l
+        DATA LENGTH: 1 OR l > 0
+        DATA: custom status code OR string of size l
     COMBINED
         VERSION
         SOURCE
         DESTINATION
-        MESSAGE ID
+        FLAGS
+            7-6: REPEAT CNT
+            5-2: MESSAGE TYPE: TM_MSG_COMBINED
+            1-0: DEVICE TYPE
+        DATA LENGTH: (1 + 1 + l) * N
+        DATA: MESSAGE TYPE | MESSAGE LEN | DATA | ... N times
+    REQUEST
+        VERSION
+        SOURCE
+        DESTINATION
+        FLAGS
+            7-6: REPEAT CNT
+            5-2: MESSAGE TYPE: TM_MSG_STATUS
+            1-0: DEVICE TYPE
+        DATA LENGTH: 1 OR l > 1
+        DATA: MESSAGE_TYPE OR MESSAGE_TYPE + extra data
+    CUSTOM
+        VERSION
+        SOURCE
+        DESTINATION
         FLAGS
             7-6: REPEAT CNT
             5-2: MESSAGE TYPE: TM_MSG_COMBINED
             1-0: DEVICE TYPE
         DATA LENGTH: l
-        DATA: l bytes (depends on answered message)
-    Custom
-        VERSION             1
-        DEVICE TYPE         x
-        MESSAGE ID          n
-        SOURCE ADDRESS      y
-        DESTINATION ADDRESS z
-        PORT NUMBER         p
-        MESSAGE TYPE        DATA
-        DATA LENGTH         l
-        DATA...             CUSTOM (l bytes)
+        DATA: l bytes
 */
 
 
-#define TM_VERSION 1
+#define TM_VERSION 3
 
 //Flag bit locations
 #define TM_NODE_TYPE_LSB 0
@@ -137,15 +158,15 @@
 
 
 //RETURN FLAGS
-#define TM_OK                   0b00000000
-#define TM_ERR_NULL             0b00000001 //packet is null or given buffer is null
-#define TM_ERR_DATA_NULL        0b00000010
-#define TM_ERR_VERSION          0b00000100
-#define TM_ERR_ADDRESS          0b00001000
-#define TM_ERR_DATA_LENGTH      0b00010000
-#define TM_ERR_MSG_TYPE         0b00100000
-#define TM_ERR_MSG_TYPE_LEN     0b01000000
-#define TM_ERR_BUF_LEN          0b10000000
+#define TM_OK               0b00000000
+#define TM_ERR_PACKET_NULL  0b00000001 //packet is null or given buffer is null
+#define TM_ERR_DATA_NULL    0b00000010
+#define TM_ERR_VERSION      0b00000100
+#define TM_ERR_ADDRESS      0b00001000
+#define TM_ERR_DATA_TRIM    0b00010000
+#define TM_ERR_DATA_LENGTH  0b00100000
+#define TM_ERR_MSG_TYPE     0b01000000
+#define TM_ERR_MSG_DATA_LEN 0b10000000
 
 //TM_ERR_MESSAGES 
 #define TM_ERR_MSG_UNHANDLED     1
@@ -165,10 +186,11 @@
 /*----(MESSAGE TYPES)----*/
 #define TM_MSG_OK       0b0000 //response can't be brodcast
 #define TM_MSG_ERR      0b0001 //response can't be brodcast
-#define TM_MSG_REGISTER 0b0010 //register to gateway (and get address)
+#define TM_MSG_ADDR_REQ 0b0010 //register to gateway (and get address)
 #define TM_MSG_PING     0b0011 //ping a node
 #define TM_MSG_STATUS   0b0100 //send string status
 #define TM_MSG_COMBINED 0b0101 //combine multiple packets into one
+#define TM_MSG_REQUEST  0b0110 //message split into multiple packets
 #define TM_MSG_CUSTOM   0b1111 //send custom data
 
 /*----(NODE TYPES)----*/
@@ -179,7 +201,7 @@
 
 
 //Packet part sizes
-#define TM_HEADER_LENGTH 7 //header length in bytes
+#define TM_HEADER_LENGTH 5 //header length in bytes
 #ifndef TM_DATA_LENGTH
     #define TM_DATA_LENGTH   256 - TM_HEADER_LENGTH
 #endif
@@ -207,8 +229,6 @@ typedef union{
         uint8_t version;
         uint8_t source;
         uint8_t destination;
-        uint8_t msg_id_msb;
-        uint8_t msg_id_lsb;
         uint8_t flags;
         uint8_t data_length;
         uint8_t data[TM_DATA_LENGTH];
@@ -216,48 +236,33 @@ typedef union{
     uint8_t raw[TM_HEADER_LENGTH + TM_DATA_LENGTH];
 } packet_t;
 
-typedef union {
-    struct {
-        uint8_t source;
-        uint8_t destination;
-        uint8_t msg_id_msb;
-        uint8_t msg_id_lsb;
-        uint8_t repeat;
-    } fields;
-    uint8_t raw[5];
-    uint16_t timer;
+
+typedef struct {
+    uint8_t source;
+    uint8_t destination;
+    union {
+        struct {
+            uint8_t answered : 1;
+            uint8_t repeat   : 2;
+            uint8_t msg_type : 4;
+        };
+        uint8_t raw;
+    } flags;
 } packet_id_t;
+
 
 
 class TinyMesh {
 private:
-    uint8_t version                        = TM_VERSION;           //supported TinyMesh version
-    uint8_t address                        = TM_DEFAULT_ADDRESS;   //this NODE address
-    uint8_t gateway                        = TM_BROADCAST_ADDRESS; //gateway address
-    uint8_t node_type                      = TM_NODE_TYPE_NODE;   //this NODE type
-
-    std::deque<packet_id_t> handled_queue;
-    uint32_t last_msg_time = 0;
-
-  #ifndef ARDUINO
-    unsigned long (*millis)() = nullptr;
-  #endif
-
-    /** @brief Compare len items in array against a specific value*/
-    template<typename T1, typename T2>
-    bool arrayValCmp(T1 array, T2 val, size_t len) {
-        for (size_t i = 0; i < len; i++) {
-            if (array[i] != val)
-                return false;
-        }
-        return true;
-    }
+    uint8_t version   = TM_VERSION;           //supported TinyMesh version
+    uint8_t address   = TM_DEFAULT_ADDRESS;   //this NODE address
+    uint8_t gateway   = TM_BROADCAST_ADDRESS; //gateway address
+    uint8_t node_type = TM_NODE_TYPE_NODE;    //this NODE type
 
 public:
     /** @brief Create TinyMesh instance.
      * The class containes a simple LCG for pseudo random message ID generation where the seed is used.
      * @param node_type Node type
-     * @param seed Starting seed for LCG
      */
     TinyMesh(uint8_t node_type);
 
@@ -265,34 +270,16 @@ public:
      * The class containes a simple LCG for pseudo random message ID generation where the seed is used.
      * @param node_type Node type
      * @param address Node address
-     * @param seed Starting seed for LCG
      */
     TinyMesh(uint8_t node_type, uint8_t address);
+
+    TinyMesh(uint8_t node_type, uint8_t address, uint8_t gateway_address);
 
     ~TinyMesh();
 
 
-  #ifndef ARDUINO
-    /** @brief Register time keeping function for creating timestamps for packets.
-     * It is expected that this function returns time in milliseconds between individual calls of this function.
-     * If other time unit is used, edit TM_TIME_TO_STALE macro (or redefine it).
-     * 
-     * @param millis Function pointer to function returning milliseconds since boot
-     */
-    void registerMillis(unsigned long (*millis)());
-  #endif
-
-    void setSeed(uint16_t seed = 42069);
-
-
-    /** @brief Set protocol version.
-     * Max version is TM_VERSION.
-     * @param version 
-     */
-    void setVersion(uint8_t version);
-
     /** @brief Set node address.
-     * Address 255 will be converted to 0
+     * Broadcast address will be skipped
      * 
      * @param address 
      */
@@ -303,33 +290,11 @@ public:
      * @param address Gateway address
      */
     void setGatewayAddress(uint8_t address);
-    
-    /** @brief Set node type.
-     * Unknown node types will be converted to TM_TYPE_OTHER.
-     * 
-     * @param node_type
-     */
-    void setNodeType(uint8_t node_type);
-
-    /** @brief Set message ID for specified packet.
-     * 
-     * @param packet Packet for which to set message ID
-     * @param message_id New message ID
-     */
-    void setMessageId(packet_t *packet, uint16_t message_id);
-
 
     uint8_t getVersion();
     uint8_t getAddress();
     uint8_t getGatewayAddress();
     uint8_t getNodeType();
-
-    /** @brief Construct and return the message ID.
-     * 
-     * @param packet Packet from which to get message ID
-     * @return Message ID
-     */
-    uint16_t getMessageId(packet_t *packet);
 
 
     /** @brief Build packet from specific data.
@@ -338,24 +303,14 @@ public:
      * 
      * @param packet Packet poiner where to store header and data
      * @param destination Destination node address
-     * @param message_id Id of this message (can be tm.lcg())
      * @param message_type Message type
      * @param data Data which to send
      * @param length Length of data
+     * @param repeat_cnt Packet repeate counter (0-3)
      * @return TM_OK on succes, TM_ERR_... macros on error
      */
-    uint8_t buildPacket(packet_t *packet, uint8_t destination, uint16_t message_id, uint8_t message_type = TM_MSG_CUSTOM, uint8_t *data = nullptr, uint8_t length = 0, uint8_t repeat_cnt = 0);
+    uint8_t buildPacket(packet_t *packet, uint8_t destination, uint8_t message_type, uint8_t repeat_cnt = 0, uint8_t *data = nullptr, uint8_t length = 0);
 
-    /** @brief Build packet from raw data.
-     * Check packet if it is valid (checkHeader).
-     * Saves packet if valid.
-     * 
-     * @param packet Packet poiner where to store header and data
-     * @param buffer Buffer with raw packet
-     * @param length Buffer length
-     * @return TM_OK on succes, TM_ERR_... macros on error
-     */
-    uint8_t buildPacket(packet_t *packet, uint8_t *buffer, uint8_t length);
 
     /** @brief Check if stored packet has valid header and header data.
      * 
@@ -365,41 +320,15 @@ public:
     uint8_t checkHeader(packet_t *packet);
 
 
-    /** @brief Check packets relation to this node.
-     * Used for received packets.
-     * Saves packet if valid.
+    /** @brief Create a Packet ID from packet
      * 
-     * @param packet Packet to check
-     * @return TM_OK on succes, TM_ERR_... macros on error
+     * @param packet 
+     * @return packet_id_t
      */
-    uint8_t checkPacket(packet_t *packet);
-
-    /** @brief Save packet id directly to sent queue
-     * 
-     * @param packet_id Packet id to save
-     */
-    void savePacketID(packet_id_t packet_id);
-
-    /** @brief Save packet ID from packet to sent queue for duplicity checks
-     * 
-     * @param packet Recently transmitted/received packet
-     */
-    void savePacket(packet_t *packet);
-
-    /** @brief Force clear queue of received/transmitted messages.*/
-    uint8_t clearSentQueue();
-
     packet_id_t createPacketID(packet_t *packet);
-    packet_id_t createPacketID(uint8_t source, uint8_t destination, uint16_t message_id, uint8_t repeat_cnt);
 
-    void updateTimers();
-    void loop();
-
-
-    uint16_t lcg(uint16_t seed = 0);
 
     //flag management helpers
-
     /** @brief Set specific bits in x to val
      * 
      * @tparam T1 
