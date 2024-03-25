@@ -57,7 +57,7 @@
 #include "libs/sx127x.hpp"
 #include "libs/containers/simpleQueue.hpp"
 #include "libs/tinyMesh.hpp"
-#include "libs/interfaces/interfaceWrapper.hpp"
+#include "libs/interfaces/InterfaceWrapper.hpp"
 #include "libs/interfaces/sx127xInterfaceWrapper.hpp"
 #include "libs/interfaces/mqttInterfaceWrapper.hpp"
 #include "creds.h"
@@ -199,7 +199,7 @@ TinyMesh tm(TM_NODE_TYPE_GATEWAY);
 sx127xInterfaceWrapper lora434_it(&lora_434);
 sx127xInterfaceWrapper lora868_it(&lora_868);
 mqttInterfaceWrapper mqtt_if;
-interfaceWrapper *interfaces[INTERFACE_COUNT] = {&lora434_it, &lora868_it, &mqtt_if};
+InterfaceWrapper *interfaces[INTERFACE_COUNT] = {&lora434_it, &lora868_it, &mqtt_if};
 
 
 /*----(STRUCTURES)----*/
@@ -218,7 +218,7 @@ typedef struct {
     std::deque<std::string> sensor_types;
     uint8_t address;
     uint8_t node_type;
-    interfaceWrapper *interfaces[INTERFACE_COUNT];
+    InterfaceWrapper *interfaces[INTERFACE_COUNT];
     uint8_t interface_cnt;
 } node_info_t;
 node_info_t this_node;
@@ -227,7 +227,7 @@ std::map<uint8_t, node_info_t> node_map;
 //simple thread safe queues
 SimpleQueue<mqtt_queue_data_t> mqtt_data_queue; //for mqtt task
 SimpleQueue<packet_t> default_response_q; //default response handler queue
-std::map<uint32_t, SimpleQueue<packet_t>*> request_queue; //for any task
+std::map<uint8_t, SimpleQueue<packet_t>*> request_queue; //for any task
 
 //task handles
 static TaskHandle_t led_task_handle;              //blinking
@@ -249,10 +249,10 @@ void mqttLog(std::string msg, uint8_t severity = MQTT_SEVERITY_INFO, uint32_t ti
 void mqttLogMessage(packet_t packet);
 void handleCommands(std::string command);
 
-uint8_t sendDataOnInterface(interfaceWrapper *it, uint8_t *data, uint8_t len);
+uint8_t sendDataOnInterface(InterfaceWrapper *it, uint8_t *data, uint8_t len);
 void sendPacket(packet_t packet, SimpleQueue<packet_t> *queue = &default_response_q);
-void handleAnswer(packet_t packet, interfaceWrapper *interface);
-void handleRequest(packet_t packet, interfaceWrapper *interface, bool repeat = false);
+void handleResponse(packet_t packet, InterfaceWrapper *interface);
+void handleRequest(packet_t packet, InterfaceWrapper *interface, bool repeat = false);
 void aliveTask(void *args);
 void mqttTask(void *args);
 void pingTask(void *args);
@@ -327,7 +327,6 @@ void printBinary(uint32_t num, uint8_t len) {
 void printPacket(packet_t packet) {
     printf("Version:             %d\n", packet.fields.version);
     printf("Node type:           %d\n", tm.getBits(packet.fields.flags, TM_NODE_TYPE_MSB, TM_NODE_TYPE_LSB));
-    printf("Message id:          %d\n", tm.getMessageId(&packet));
     printf("Repeat count:        %d\n", tm.getBits(packet.fields.flags, TM_RPT_CNT_MSB, TM_RPT_CNT_LSB));
     printf("Source address:      %d\n", packet.fields.source);
     printf("Destination address: %d\n", packet.fields.destination);
@@ -374,7 +373,6 @@ std::string packet2json(packet_t packet) {
     result += "\"version\": "      + std::to_string(packet.fields.version)     + ",";
     result += "\"source\": "       + std::to_string(packet.fields.source)      + ",";
     result += "\"destination\": "  + std::to_string(packet.fields.destination) + ",";
-    result += "\"message id\": "   + std::to_string(tm.getMessageId(&packet))  + ",";
     result += "\"repeate cnt\": "  + std::to_string(tm.getBits(packet.fields.flags, TM_RPT_CNT_MSB, TM_RPT_CNT_LSB))  + ",";
     result += "\"node type\": ";
     switch (tm.getBits(packet.fields.flags, TM_NODE_TYPE_MSB, TM_NODE_TYPE_LSB)) {
@@ -564,7 +562,7 @@ void handleCommands(std::string command) {
             if (data_length != TM_DATA_LENGTH)
                 data_length = data.size();
 
-            uint8_t ret = tm.buildPacket(&packet, destination, tm.lcg(), TM_MSG_CUSTOM, (uint8_t*)data.c_str(), data_length);
+            uint8_t ret = tm.buildPacket(&packet, destination, TM_MSG_CUSTOM, (uint8_t*)data.c_str(), data_length);
             if (ret) {
                 ESP_LOGE(TAG, "Failed to create response: %d", ret);
                 return;
@@ -919,7 +917,7 @@ void configureLora(SX127X *lora, float freq, uint8_t sync_word, uint16_t preambl
  * @param packet Packet in valid format
  * @param interface Interface id
  */
-uint8_t sendDataOnInterface(interfaceWrapper *it, uint8_t *data, uint8_t len) {
+uint8_t sendDataOnInterface(InterfaceWrapper *it, uint8_t *data, uint8_t len) {
     static const char* TAG = "SEND ON INTERFACE";
 
     //basic checks
@@ -1000,10 +998,9 @@ void sendPacket(packet_t packet, SimpleQueue<packet_t> *queue) {
     if (!sent_succ)
         return;
 
-    //save packet and queue
-    uint32_t tmp;
-    memcpy(&tmp, tm.createPacketID(&packet).raw, 4);
-    request_queue.insert({tmp, queue});
+    //save our request
+    if (packet.fields.source == tm.getAddress())
+        request_queue.insert({packet.fields.destination, queue});
 
     ESP_LOGI(TAG, "Packet sent succesfully");
     mqttLogMessage(packet);
@@ -1014,21 +1011,19 @@ void sendPacket(packet_t packet, SimpleQueue<packet_t> *queue) {
  * 
  * @param packet Packet to send to handler
  */
-void handleAnswer(packet_t packet, interfaceWrapper *interface) {
+void handleResponse(packet_t packet, InterfaceWrapper *interface) {
     static const char* TAG = "HANDLE ANSWER";
 
     //build packet_id of possible request, find it's response queue handler and send the packet there
-    auto packet_id = tm.createPacketID(packet.fields.destination, packet.fields.source, tm.getMessageId(&packet) - 1, packet.fields.flags);
-    uint32_t tmp;
-    memcpy(&tmp, packet_id.raw, 4);
-    auto search = request_queue.find(tmp);
+    auto packet_id = tm.createPacketID(packet.fields.destination, packet.fields.source);
+    auto search = request_queue.find(packet.fields.source);
     if (search == request_queue.end()) {
         ESP_LOGE(TAG, "No answer handler found, this should never happen");
         return;
     }
 
-    request_queue[tmp]->write(packet); //send packet to corresponding task waiting for data in queue
-    request_queue.erase(tmp); //remove the entry
+    request_queue[packet.fields.source]->write(packet); //send packet to corresponding task waiting for data in queue
+    request_queue.erase(packet.fields.source); //remove the entry
 }
 
 
@@ -1037,7 +1032,7 @@ void handleAnswer(packet_t packet, interfaceWrapper *interface) {
  * @param packet 
  * @param  
  */
-void handleRequest(packet_t packet, interfaceWrapper *interface, bool repeat) {
+void handleRequest(packet_t packet, InterfaceWrapper *interface, bool repeat) {
     static const char* TAG = "HANDLE REQUEST";
 
     std::string node_path = MQTT_NODES_PATH "/" + std::to_string(packet.fields.source); //mqtt node path
@@ -1091,10 +1086,10 @@ void handleRequest(packet_t packet, interfaceWrapper *interface, bool repeat) {
             uint16_t ret = 0;
             if (!new_address) {
                 uint8_t data = TM_ERR_ADDRESS_LIMIT;
-                ret = tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_ERR, &data, 1, rpt_cnt);
+                ret = tm.buildPacket(&packet, packet.fields.source, TM_MSG_ERR, &data, 1, rpt_cnt);
             }
             else
-                ret = tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_OK, &new_address, 1, rpt_cnt);
+                ret = tm.buildPacket(&packet, packet.fields.source, TM_MSG_OK, &new_address, 1, rpt_cnt);
 
             if (ret) {
                 ESP_LOGE(TAG, "Failed to create response: %d", ret);
@@ -1106,7 +1101,7 @@ void handleRequest(packet_t packet, interfaceWrapper *interface, bool repeat) {
 
         case TM_MSG_PING: {
             ESP_LOGI(TAG, "Sending response to ping");
-            ret = tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_OK, nullptr, 0, rpt_cnt);
+            ret = tm.buildPacket(&packet, packet.fields.source, TM_MSG_OK, nullptr, 0, rpt_cnt);
             if (ret) {
                 ESP_LOGE(TAG, "Failed to create response: %d", ret);
                 break;
@@ -1119,7 +1114,7 @@ void handleRequest(packet_t packet, interfaceWrapper *interface, bool repeat) {
             ESP_LOGI(TAG, "Sending response to status");
             mqttPublishQueue(node_path + MQTT_STATUS, packetData2str(packet));
             uint8_t str[] = "OK";
-            ret = tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_OK, str, 2, rpt_cnt);
+            ret = tm.buildPacket(&packet, packet.fields.source, TM_MSG_OK, str, 2, rpt_cnt);
             if (ret) {
                 ESP_LOGE(TAG, "Failed to create response: %d", ret);
                 break;
@@ -1132,7 +1127,7 @@ void handleRequest(packet_t packet, interfaceWrapper *interface, bool repeat) {
         case TM_MSG_COMBINED: {
             ESP_LOGI(TAG, "Sending response to combined");
             //TODO parse...
-            ret = tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_OK, nullptr, 0, rpt_cnt);
+            ret = tm.buildPacket(&packet, packet.fields.source, TM_MSG_OK, nullptr, 0, rpt_cnt);
             if (ret) {
                 ESP_LOGE(TAG, "Failed to create response: %d", ret);
                 break;
@@ -1154,13 +1149,13 @@ void handleRequest(packet_t packet, interfaceWrapper *interface, bool repeat) {
 
             if (packet.fields.data[0] != 'N' || packet.fields.data[1] != 'D') {
                 uint8_t data = TM_ERR_SERVICE_UNHANDLED;
-                tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_ERR, &data, 1, rpt_cnt);
+                tm.buildPacket(&packet, packet.fields.source, TM_MSG_ERR, &data, 1, rpt_cnt);
                 sendPacket(packet);
             }
 
             //don't handle anything if already handled
             if (repeat) {
-                tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_OK, nullptr, 0, rpt_cnt);
+                tm.buildPacket(&packet, packet.fields.source, TM_MSG_OK, nullptr, 0, rpt_cnt);
                 sendPacket(packet);
                 break;
             }
@@ -1223,7 +1218,7 @@ void handleRequest(packet_t packet, interfaceWrapper *interface, bool repeat) {
                 }
             }
 
-            tm.buildPacket(&packet, packet.fields.source, tm.getMessageId(&packet) + 1, TM_MSG_OK, nullptr, 0, rpt_cnt);
+            tm.buildPacket(&packet, packet.fields.source, TM_MSG_OK, nullptr, 0, rpt_cnt);
             sendPacket(packet);
             break;
         }
@@ -1296,7 +1291,7 @@ void pingTask(void *args) {
     packet_t packet;
     uint8_t destination = *(uint8_t *) args;
     std::string result;
-    uint8_t ret = tm.buildPacket(&packet, destination, tm.lcg(), TM_MSG_PING);
+    uint8_t ret = tm.buildPacket(&packet, destination, TM_MSG_PING);
     if (ret) {
         ESP_LOGE(TAG, "Failed to build ping packet: %d", ret);
         vTaskDelete(NULL);
@@ -1387,7 +1382,6 @@ extern "C" void app_main() {
     lora434_it.startReception();
 
     //TinyMesh configuration
-    tm.setSeed();
     tm.setAddress(NODE_ADDRESS);
     tm.registerMillis(millis);
 
@@ -1431,7 +1425,7 @@ extern "C" void app_main() {
             printf("Received packet:\n");
             printPacket(packet);
 
-            ret = tm.checkPacket(&packet); //check packets relation to gateway
+            ret = tm.classifyPacket(&packet); //check packets relation to gateway
 
             if (ret & TM_PACKET_DUPLICATE) {
                 ESP_LOGE(TAG, "Duplicate packet from %s", std::to_string(packet.fields.source).c_str());
@@ -1452,7 +1446,7 @@ extern "C" void app_main() {
             //handle response
             if (ret & TM_PACKET_RESPONSE) {
                 ESP_LOGI(TAG, "Packet is a response");
-                handleAnswer(packet, interfaces[i]);
+                handleResponse(packet, interfaces[i]);
             }
 
             //handle new request

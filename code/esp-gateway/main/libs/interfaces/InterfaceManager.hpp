@@ -5,12 +5,26 @@
 #include "interfaceWrapper.hpp"
 
 
+class InterfaceManagerBase {
+protected:
+    uint8_t if_cnt = 0;
+
+public:
+    virtual ~InterfaceManagerBase() {}
+    // Define virtual methods that will be implemented by InterfaceManager<N>
+
+    virtual uint8_t addInterface(InterfaceWrapper *interface) = 0;
+    virtual uint8_t getInterfaceCount() = 0;
+    virtual uint8_t hasData() = 0;
+    virtual uint8_t getNextData(uint8_t *data, uint8_t *len) = 0;
+    virtual uint8_t sendData(uint8_t *data, uint8_t len) = 0;
+    virtual uint8_t sendData(uint8_t if_id, uint8_t *data, uint8_t *len) = 0;
+};
 
 template <uint8_t N>
-class InterfaceManager {
+class InterfaceManager : public InterfaceManagerBase {
 private:
     InterfaceWrapper *interfaces[N] = {nullptr};
-    uint8_t if_cnt = 0;
 
 public:
     InterfaceManager(/* args */);
@@ -26,6 +40,10 @@ public:
         interfaces[if_cnt] = interface;
         if_cnt++;
         return 0;
+    }
+
+    uint8_t getInterfaceCount() {
+        return if_cnt;
     }
 
     /** @brief Check if there are any data and if so, how many.
@@ -67,6 +85,23 @@ public:
         return 256;
     }
 
+
+    /** @brief Send data on all interfaces.
+     * 
+     * @param data Data to be sent.
+     * @param len Length of the data.
+     * @return 0 on success.
+     * Other values are interface specific.
+     */
+    uint8_t sendData(uint8_t *data, uint8_t len) {
+        uint8_t ret = 0;
+        uint8_t len_cp = len;
+        for (uint8_t i = 0; i < if_cnt; i++) {
+            ret |= interfaces[if_cnt]->senData(data, &len);
+            len = len_cp;
+        }
+        return ret;
+    }
 
     /** @brief Send data on interface.
      * 

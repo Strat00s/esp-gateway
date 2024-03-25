@@ -12,52 +12,6 @@
 #include <string.h>
 
 
-TinyMesh::TinyMesh(uint8_t node_type) {
-    this->node_type = node_type;
-}
-
-TinyMesh::TinyMesh(uint8_t node_type, uint8_t address) : TinyMesh(node_type) {
-    this->address = address;
-}
-
-TinyMesh::TinyMesh(uint8_t node_type, uint8_t address, uint8_t gateway_address) : TinyMesh(node_type, address) {
-    this->gateway = gateway_address;
-}
-
-TinyMesh::~TinyMesh() {
-
-}
-
-
-void TinyMesh::setAddress(uint8_t address) {
-    if (address == TM_BROADCAST_ADDRESS)
-        return;
-    else
-        this->address = address;
-}
-
-void TinyMesh::setGatewayAddress(uint8_t address) {
-    this->gateway = address;
-}
-
-
-uint8_t TinyMesh::getVersion() {
-    return this->version;
-}
-
-uint8_t TinyMesh::getAddress() {
-    return this->address;
-}
-
-uint8_t TinyMesh::getGatewayAddress() {
-    return this->gateway;
-}
-
-uint8_t TinyMesh::getNodeType() {
-    return this->node_type;
-}
-
-
 uint8_t TinyMesh::buildPacket(packet_t *packet, uint8_t destination, uint8_t message_type, uint8_t repeat_cnt, uint8_t *data, uint8_t length) {
     uint8_t ret = TM_OK;
 
@@ -92,8 +46,7 @@ uint8_t TinyMesh::buildPacket(packet_t *packet, uint8_t destination, uint8_t mes
     return ret;
 }
 
-
-uint8_t TinyMesh::checkHeader(packet_t *packet) {
+uint8_t TinyMesh::checkPacket(packet_t *packet) {
     uint8_t ret = TM_OK;
 
     //unsuported version
@@ -138,7 +91,6 @@ uint8_t TinyMesh::checkHeader(packet_t *packet) {
 
     return ret;
 }
-
 
 packet_id_t TinyMesh::createPacketID(packet_t *packet) {
     packet_id_t packet_id;
