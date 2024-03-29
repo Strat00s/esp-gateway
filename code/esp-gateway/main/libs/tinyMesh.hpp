@@ -14,10 +14,6 @@
 #include <string.h>
 #include <deque>
 
-#ifdef ARDUINO
-#include <Arduino.h>
-#endif
-
 
 /*# Packet structure
 -------------HEADER-------------
@@ -145,7 +141,6 @@ if no response, use that address
         DATA: l bytes
 */
 
-namespace tinymesh {
 
 #define TM_VERSION 3
 
@@ -157,33 +152,37 @@ namespace tinymesh {
 #define TM_RPT_CNT_LSB   6
 #define TM_RPT_CNT_MSB   7
 
+#define TM_VERSION_POS     0
+#define TM_SOURCE_POS      1
+#define TM_DESTINATION_POS 2
+#define TM_SEQUENCE_POS    3
+#define TM_FLAGS_POS       5
+#define TM_DATA_LEN_POS    6
+#define TM_DATA_POS        7
+
 
 //RETURN FLAGS
 #define TM_OK               0b00000000
-#define TM_ERR_PACKET_NULL  0b00000001 //packet is null or given buffer is null
-#define TM_ERR_DATA_NULL    0b00000010
-#define TM_ERR_VERSION      0b00000100
-#define TM_ERR_ADDRESS      0b00001000
-#define TM_ERR_DATA_TRIM    0b00010000
-#define TM_ERR_DATA_LENGTH  0b00100000
-#define TM_ERR_MSG_TYPE     0b01000000
-#define TM_ERR_MSG_DATA_LEN 0b10000000
 
-//TM_ERR_MESSAGES 
-#define TM_ERR_MSG_UNHANDLED     1
-#define TM_ERR_SERVICE_UNHANDLED 2
-#define TM_ERR_ADDRESS_LIMIT     3
+#define TM_BUILD_DATA_NULL    0b00000001
+#define TM_BUILD_HEADER_ERR   0b00000010
+#define TM_BUILD_DATA_TRIM    0b00000100
+
+#define TM_CHECK_VERSION      0b00001000
+#define TM_CHECK_ADDRESS      0b00010000
+#define TM_CHECK_DATA_LEN     0b00100000
+#define TM_CHECK_MSG_TYPE     0b01000000
+#define TM_CHECK_MSG_DATA_LEN 0b10000000
+
 
 //Check packet returns
-#define TM_PACKET_DUPLICATE    0b00000001
-#define TM_PACKET_RESPONSE     0b00000010
-#define TM_PACKET_RND_RESPONSE 0b00000100
-#define TM_PACKET_REQUEST      0b00001000
-#define TM_PACKET_FORWARD      0b00010000
-#define TM_PACKET_REPEAT       0b00100000
-#define TM_PACKET_INV_RESPONSE 0b01000000
-
-#define TM_MAX_REPEAT 0b11
+//#define TM_PACKET_DUPLICATE    0b00000001
+//#define TM_PACKET_RESPONSE     0b00000010
+//#define TM_PACKET_RND_RESPONSE 0b00000100
+//#define TM_PACKET_REQUEST      0b00001000
+//#define TM_PACKET_FORWARD      0b00010000
+//#define TM_PACKET_REPEAT       0b00100000
+//#define TM_PACKET_INV_RESPONSE 0b01000000
 
 /*----(MESSAGE TYPES)----*/
 #define TM_MSG_OK       0b0000 //response can't be brodcast
@@ -202,10 +201,11 @@ namespace tinymesh {
 #define TM_NODE_TYPE_OTHER   0b11
 
 
-//Packet part sizes
-#define TM_HEADER_LENGTH 5 //header length in bytes
-#define TM_DATA_LENGTH   256 - TM_HEADER_LENGTH
-#define TM_PACKET_LENGTH TM_DATA_LENGTH + TM_HEADER_LENGTH
+//Packet header size
+#define TM_HEADER_LENGTH 7
+#define TM_DATA_LENGTH 16
+
+#define TM_PACKET_SIZE TM_HEADER_LENGTH + TM_DATA_LENGTH
 
 
 //Default config
@@ -213,210 +213,118 @@ namespace tinymesh {
 #define TM_BROADCAST_ADDRESS 255 //default broadcast address
 
 
+class TMPacket {
+private:
+    /** @brief Set bits in x from msb to lsb to val */
+    void setBits(uint8_t *x, uint8_t val, uint8_t msb, uint8_t lsb);
 
-#define ARRAY_CMP(a1, a2, len) (memcmp(a1, a2, len) == 0) //compare len of arrays against each other
+    /** @brief Get specific bits from x shifted to start from 1st (lsb) bit*/
+    uint8_t getBits(uint8_t x, uint8_t msb, uint8_t lsb);
 
-#define GET_MSG_TYPE(flags)  getBits(flags, TM_MSG_TYPE_MSB, TM_MSG_TYPE_LSB)
-#define GET_RPT_CNT(flags)   getBits(flags, TM_RPT_CNT_MSB, TM_RPT_CNT_LSB)
-#define GET_NODE_TYPE(flags) getBits(flags, TM_NODE_TYPE_MSB, TM_NODE_TYPE_LSB)
+public:
+    uint8_t raw[TM_PACKET_SIZE];
 
-
-
-typedef union{
-    struct {
-        uint8_t version;
-        uint8_t source;
-        uint8_t destination;
-        uint8_t flags;
-        uint8_t data_length;
-        uint8_t data[TM_DATA_LENGTH];
-    } fields;
-    uint8_t raw[TM_HEADER_LENGTH + TM_DATA_LENGTH];
-    uint8_t size() {
-        return TM_HEADER_LENGTH + this->fields.data_length;
-    }
-} packet_t;
+    TMPacket();
+    ~TMPacket();
 
 
-typedef struct {
-    uint8_t source;
-    uint8_t destination;
-    uint8_t tts; //time to stale
-    union {
-        struct {
-            uint8_t answered : 1; //answer was received or we sent an answer
-            uint8_t repeat   : 2;
-            uint8_t msg_type : 4;
-        };
-        uint8_t raw;
-    } flags;
+    inline void setVersion(uint8_t version);
 
-    inline bool isEmpty() {
-        return !source && !destination && !flags.raw;
-    }
+    inline void setSource(uint8_t source);
 
-    inline void clear() {
-        source = 0;
-        destination = 0;
-        tts = 0;
-        flags.raw = 0;
-    }
-} packet_id_t;
+    inline void setDestination(uint8_t destination);
 
-inline bool operator==(const packet_id_t& lhs, const packet_id_t& rhs) {
-    return lhs.source == rhs.source &&
-           lhs.destination == rhs.destination &&
-           lhs.flags.msg_type == rhs.flags.msg_type;
-}
+    inline void setSequence(uint16_t sequence);
 
+    inline void setRepeatCount(uint8_t repeat);
 
-inline uint8_t getVersion() {
-    return TM_VERSION;
-}
+    inline void setNodeType(uint8_t node_type);
+
+    inline void setMessageType(uint8_t msg_type);
+
+    /** @brief Set entire flag field at once
+     *
+     * @param flags 
+     */
+    inline void setFlags(uint8_t flags);
+
+    inline void setDataLength(uint8_t length);
+
+    /** @brief Copies specified data into the packet.
+     * 
+     * @param data Buffer with data to be written to the packet.
+     * @param len Length of the data.
+     * @return Number of copied bytes, which can be smaller than len.
+     */
+    inline uint8_t setData(uint8_t *data, uint8_t len);
 
 
-/** @brief Build packet from specific data.
- * Runs checkHeader() at the end.
- * Saves packet if valid.
- * 
- * @param packet Packet poiner where to store header and data
- * @param source Source node address
- * @param destination Destination node address
- * @param message_type Message type
- * @param data Data which to send
- * @param length Length of data
- * @param repeat_cnt Packet repeate counter (0-3)
- * @return TM_OK on succes, TM_ERR_... macros on error
- */
-uint8_t buildPacket(packet_t *packet, uint8_t source, uint8_t destination, uint8_t node_type,
-                    uint8_t message_type, uint8_t repeat_cnt = 0, uint8_t *data = nullptr, uint8_t length = 0) {
-    uint8_t ret = TM_OK;
+    inline uint8_t getVersion();
+    
+    inline uint8_t getSource();
+    
+    inline uint8_t getDestination();
+    
+    inline uint16_t getSequence();
+    
+    inline uint8_t getRepeatCount();
+    
+    inline uint8_t getNodeType();
+    
+    inline uint8_t getMessageType();
+    
+    inline uint8_t getFlags();
+    
+    inline uint8_t getDataLength();
 
-    if (packet == nullptr)
-        return TM_ERR_PACKET_NULL;
+    /** @brief Get packet data as a pointer.
+     * Can be used for direct write instead of copying data into the packet.
+     * 
+     * @return Returns a pointer to the interla packet data structure.
+     */
+    inline uint8_t *getData();
 
-    //build packet
-    packet->fields.version     = TM_VERSION;
-    packet->fields.source      = source;
-    packet->fields.destination = destination;
-    packet->fields.data_length = length;
-    packet->fields.flags       = repeat_cnt << 6 | message_type << 2 | node_type;
-
-    //check if header is valid
-    ret |= checkPacket(packet);
-
-    //return now if there are no data to copy
-    if (!length)
-        return ret;
-
-    //data are null, but some are to be copied -> don't copy anything
-    if (data == nullptr && length != 0)
-        return ret |= TM_ERR_DATA_NULL;
-
-    if (length > TM_DATA_LENGTH) {
-        memcpy(packet->fields.data, data, TM_DATA_LENGTH);
-        ret |= TM_ERR_DATA_TRIM;
-    }
-    else
-        memcpy(packet->fields.data, data, length);
-
-    return ret;
-}
+    /** @brief Copies packet data to buffer.
+     * 
+     * @param buffer Buffer to which to copy the data.
+     * @param len Length of the buffer.
+     * @return Number of copied bytes. 
+     */
+    inline uint8_t getData(uint8_t *buffer, uint8_t len);
 
 
-/** @brief Check if stored packet has valid header and header data.
- * 
- * @param packet Packet to check
- * @return TM_OK on succes, TM_ERR_... macros on error
- */
-uint8_t checkPacket(packet_t *packet) {
-    uint8_t ret = TM_OK;
+    /** @brief Size of the used space inside the packet.
+     * 
+     * @return Header size + size of data currently stored inside the packet.
+     */
+    inline uint8_t size();
 
-    //unsuported version
-    if (packet->fields.version != TM_VERSION)
-        ret |= TM_ERR_VERSION;
+    inline void clear();
 
-    if (packet->fields.source == TM_BROADCAST_ADDRESS)
-        ret |= TM_ERR_ADDRESS;
-
-    //data too long
-    if (packet->fields.data_length > TM_DATA_LENGTH)
-        ret |= TM_ERR_DATA_LENGTH;
-
-    switch (getBits(packet->fields.flags, TM_MSG_TYPE_MSB, TM_MSG_TYPE_LSB)) {
-        case TM_MSG_OK:
-            if (packet->fields.destination == TM_BROADCAST_ADDRESS)
-                ret |= TM_ERR_MSG_TYPE;
-                break;
-        case TM_MSG_CUSTOM: break;
-        case TM_MSG_ERR:
-            if (packet->fields.destination == TM_BROADCAST_ADDRESS)
-                ret |= TM_ERR_MSG_TYPE;
-        case TM_MSG_PING:
-            if (packet->fields.data_length != 1)
-                ret |= TM_ERR_MSG_DATA_LEN;
-            break;
-        case TM_MSG_REGISTER:
-            if (packet->fields.data_length)
-                ret |= TM_ERR_MSG_DATA_LEN;
-            break;
-        case TM_MSG_STATUS:
-            if (!packet->fields.data_length)
-                ret |= TM_ERR_MSG_DATA_LEN;
-            break;
-        case TM_MSG_COMBINED:
-            if (packet->fields.data_length < 2)
-                ret |= TM_ERR_MSG_DATA_LEN;
-            break;
-        case TM_MSG_REQUEST:
-            if (packet->fields.data_length < 1)
-                ret |= TM_ERR_MSG_DATA_LEN;
-            break;
-        default:
-            ret |= TM_ERR_MSG_TYPE;
-            break;
-    }
-
-    return ret;
-}
+    inline bool empty();
 
 
-/** @brief Create a packet ID from packet
- *
- * @param packet 
- * @return packet_id_t
- */
-packet_id_t createPacketID(packet_t *packet) {
-    packet_id_t packet_id;
-    packet_id.source         = packet->fields.source;
-    packet_id.destination    = packet->fields.destination;
-    packet_id.flags.answered = 0;
-    packet_id.flags.repeat   = getBits(packet->fields.flags, TM_RPT_CNT_MSB, TM_RPT_CNT_LSB);
-    packet_id.flags.msg_type = getBits(packet->fields.flags, TM_MSG_TYPE_MSB, TM_MSG_TYPE_LSB);
-    return packet_id;
-}
+    /** @brief Build packet from specified data.
+     * Runs checkHeader() at the end.
+     * 
+     * @param source Source node address
+     * @param destination Destination node address
+     * @param seq Packet sequencing number
+     * @param node_type Source node type
+     * @param message_type Message type
+     * @param repeat_cnt Current repeat count (0-3)
+     * @param data Data which to send
+     * @param length Length of data
+     * @return TM_OK on succes, TM_ERR_... macros on error
+     */
+    uint8_t buildPacket(uint8_t source, uint8_t destination, uint16_t seq, uint8_t node_type,
+                        uint8_t message_type, uint8_t repeat_cnt = 0, uint8_t *data = nullptr, uint8_t length = 0);
 
+    /** @brief Check if stored packet has valid header and header data.
+     * 
+     * @param packet Packet to check
+     * @return TM_OK on succes, TM_ERR_... macros on error
+     */
+    uint8_t checkHeader();
 
-//flag management helpers
-/** @brief Set specific bits in x to val
- * 
- * @tparam T1 
- * @tparam T2 
- * @param x 
- * @param val 
- * @param msb 
- * @param lsb 
- */
-template<typename T1, typename T2>
-inline void setBits(T1 *x, T2 val, uint8_t msb, uint8_t lsb) {
-    T1 mask = ((T1)1 << (msb - lsb + 1)) - 1;
-    mask <<= lsb;
-    *x = (*x & ~mask) | ((val << lsb) & mask);
-}
-
-/** @brief Get specific bits from x shifted to start from 1st (lsb) bit*/
-template<typename T>
-inline T getBits(T x, uint8_t msb, uint8_t lsb) {
-    return (x >> lsb) & (((T)1 << (msb - lsb + 1)) - 1);
-}
 };
