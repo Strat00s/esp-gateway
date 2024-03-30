@@ -8,7 +8,7 @@
  *
  */
 
-#include "tinyMesh.hpp"
+#include "TinyMeshPacket.hpp"
 #include <string.h>
 
 inline void TMPacket::setVersion(uint8_t version) {
@@ -23,9 +23,8 @@ inline void TMPacket::setDestination(uint8_t destination) {
     raw[TM_DESTINATION_POS] = destination;
 }
 
-inline void TMPacket::setSequence(uint16_t sequence) {
-    raw[TM_SEQUENCE_POS] = sequence >> 8;
-    raw[TM_SEQUENCE_POS + 1] = sequence;
+inline void TMPacket::setSequence(uint8_t sequence) {
+    raw[TM_SEQUENCE_POS] = sequence;
 }
 
 inline void TMPacket::setRepeatCount(uint8_t repeat) {
@@ -89,8 +88,8 @@ inline uint8_t TMPacket::getDestination() {
     return raw[TM_DESTINATION_POS];
 }
 
-inline uint16_t TMPacket::getSequence() {
-    return ((uint16_t)raw[TM_SEQUENCE_POS]) << 8 | raw[TM_SEQUENCE_POS + 1];
+inline uint8_t TMPacket::getSequence() {
+    return raw[TM_SEQUENCE_POS];
 }
 
 inline uint8_t TMPacket::getRepeatCount() {
@@ -167,7 +166,7 @@ inline bool TMPacket::empty() {
  * @param length Length of data
  * @return TM_OK on succes, TM_ERR_... macros on error
  */
-uint8_t TMPacket::buildPacket(uint8_t source, uint8_t destination, uint16_t seq, uint8_t node_type,
+uint8_t TMPacket::buildPacket(uint8_t source, uint8_t destination, uint8_t sequence, uint8_t node_type,
                               uint8_t message_type, uint8_t repeat_cnt = 0, uint8_t *data = nullptr, uint8_t length = 0) {
 
     // data are null, but some are to be copied -> don't copy anything
@@ -187,7 +186,7 @@ uint8_t TMPacket::buildPacket(uint8_t source, uint8_t destination, uint16_t seq,
     setVersion(TM_VERSION);
     setSource(source);
     setDestination(destination);
-    setSequence(seq);
+    setSequence(sequence);
     setFlags(repeat_cnt << 6 | message_type << 2 | node_type);
     setDataLength(length);
 
@@ -261,6 +260,7 @@ uint8_t TMPacket::checkHeader() {
 
     return ret;
 };
+
 
 
 /** @brief Set bits in x from msb to lsb to val */

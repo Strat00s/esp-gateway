@@ -12,7 +12,6 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
-#include <deque>
 
 
 /*# Packet structure
@@ -152,13 +151,15 @@ if no response, use that address
 #define TM_RPT_CNT_LSB   6
 #define TM_RPT_CNT_MSB   7
 
+
 #define TM_VERSION_POS     0
 #define TM_SOURCE_POS      1
 #define TM_DESTINATION_POS 2
 #define TM_SEQUENCE_POS    3
-#define TM_FLAGS_POS       5
-#define TM_DATA_LEN_POS    6
-#define TM_DATA_POS        7
+#define TM_FLAGS_POS       4
+#define TM_DATA_LEN_POS    5
+
+#define TM_DATA_POS        6
 
 
 //RETURN FLAGS
@@ -202,7 +203,7 @@ if no response, use that address
 
 
 //Packet header size
-#define TM_HEADER_LENGTH 7
+#define TM_HEADER_LENGTH 6
 #define TM_DATA_LENGTH 16
 
 #define TM_PACKET_SIZE TM_HEADER_LENGTH + TM_DATA_LENGTH
@@ -234,7 +235,7 @@ public:
 
     inline void setDestination(uint8_t destination);
 
-    inline void setSequence(uint16_t sequence);
+    inline void setSequence(uint8_t sequence);
 
     inline void setRepeatCount(uint8_t repeat);
 
@@ -265,7 +266,7 @@ public:
     
     inline uint8_t getDestination();
     
-    inline uint16_t getSequence();
+    inline uint8_t getSequence();
     
     inline uint8_t getRepeatCount();
     
@@ -304,6 +305,9 @@ public:
     inline bool empty();
 
 
+    TMPacketID createPacketID();
+
+
     /** @brief Build packet from specified data.
      * Runs checkHeader() at the end.
      * 
@@ -317,7 +321,7 @@ public:
      * @param length Length of data
      * @return TM_OK on succes, TM_ERR_... macros on error
      */
-    uint8_t buildPacket(uint8_t source, uint8_t destination, uint16_t seq, uint8_t node_type,
+    uint8_t buildPacket(uint8_t source, uint8_t destination, uint8_t sequence, uint8_t node_type,
                         uint8_t message_type, uint8_t repeat_cnt = 0, uint8_t *data = nullptr, uint8_t length = 0);
 
     /** @brief Check if stored packet has valid header and header data.
