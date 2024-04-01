@@ -171,7 +171,7 @@ uint8_t TMPacket::buildPacket(uint8_t source, uint8_t destination, uint8_t seque
 
     // data are null, but some are to be copied -> don't copy anything
     if (data == nullptr && length != 0)
-        return TM_BUILD_DATA_NULL;
+        return TM_ERR_DATA_NULL;
 
     uint8_t ret = TM_OK;
 
@@ -198,7 +198,7 @@ uint8_t TMPacket::buildPacket(uint8_t source, uint8_t destination, uint8_t seque
         return ret;
 
     if (setData(data, length) != length)
-        return ret | TM_BUILD_DATA_TRIM;
+        return ret | TM_ERR_DATA_TRIM;
 
     return ret;
 };
@@ -213,48 +213,35 @@ uint8_t TMPacket::checkHeader() {
 
     // unsuported version
     if (getVersion() != TM_VERSION)
-        ret |= TM_CHECK_VERSION;
+        ret |= TM_ERR_VERSION;
 
     if (getSource() == TM_BROADCAST_ADDRESS)
-        ret |= TM_CHECK_ADDRESS;
+        ret |= TM_ERR_ADDRESS;
 
     // data too long
     if (getDataLength() > TM_DATA_LENGTH)
-        ret |= TM_CHECK_DATA_LEN;
+        ret |= TM_ERR_DATA_LEN;
 
-    switch (getMessageType())
-    {
+    switch (getMessageType()) {
     case TM_MSG_OK:
         if (getDestination() == TM_BROADCAST_ADDRESS)
-            ret |= TM_CHECK_MSG_TYPE;
+            ret |= TM_ERR_MSG_TYPE;
         break;
-    case TM_MSG_CUSTOM:
-        break;
+
     case TM_MSG_ERR:
         if (getDestination() == TM_BROADCAST_ADDRESS)
-            ret |= TM_CHECK_MSG_TYPE;
+            ret |= TM_ERR_MSG_TYPE;
     case TM_MSG_PING:
         if (getDataLength() != 1)
-            ret |= TM_CHECK_MSG_DATA_LEN;
+            ret |= TM_ERR_MSG_DATA_LEN;
         break;
-    case TM_MSG_REGISTER:
-        if (getDataLength())
-            ret |= TM_CHECK_MSG_DATA_LEN;
+
+    case TM_MSG_CUSTOM:
         break;
-    case TM_MSG_STATUS:
-        if (!getDataLength())
-            ret |= TM_CHECK_MSG_DATA_LEN;
-        break;
-    case TM_MSG_COMBINED:
-        if (getDataLength() < 2)
-            ret |= TM_CHECK_MSG_DATA_LEN;
-        break;
-    case TM_MSG_REQUEST:
-        if (getDataLength() < 1)
-            ret |= TM_CHECK_MSG_DATA_LEN;
-        break;
+
     default:
-        ret |= TM_CHECK_MSG_TYPE;
+        if (getMessageType() > 15)
+            ret |= TM_ERR_MSG_TYPE;
         break;
     }
 

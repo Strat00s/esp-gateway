@@ -165,15 +165,15 @@ if no response, use that address
 //RETURN FLAGS
 #define TM_OK               0b00000000
 
-#define TM_BUILD_DATA_NULL    0b00000001
-#define TM_BUILD_HEADER_ERR   0b00000010
-#define TM_BUILD_DATA_TRIM    0b00000100
+#define TM_ERR_DATA_NULL    0b00000001
+#define TM_ERR_HEADER_ERR   0b00000010
+#define TM_ERR_DATA_TRIM    0b00000100
 
-#define TM_CHECK_VERSION      0b00001000
-#define TM_CHECK_ADDRESS      0b00010000
-#define TM_CHECK_DATA_LEN     0b00100000
-#define TM_CHECK_MSG_TYPE     0b01000000
-#define TM_CHECK_MSG_DATA_LEN 0b10000000
+#define TM_ERR_VERSION      0b00001000
+#define TM_ERR_ADDRESS      0b00010000
+#define TM_ERR_DATA_LEN     0b00100000
+#define TM_ERR_MSG_TYPE     0b01000000
+#define TM_ERR_MSG_DATA_LEN 0b10000000
 
 
 //Check packet returns
@@ -186,14 +186,11 @@ if no response, use that address
 //#define TM_PACKET_INV_RESPONSE 0b01000000
 
 /*----(MESSAGE TYPES)----*/
-#define TM_MSG_OK       0b0000 //response can't be brodcast
-#define TM_MSG_ERR      0b0001 //response can't be brodcast
-#define TM_MSG_REGISTER 0b0010 //register to gateway (and get address)
-#define TM_MSG_PING     0b0011 //ping a node
-#define TM_MSG_STATUS   0b0100 //send string status
-#define TM_MSG_COMBINED 0b0101 //combine multiple packets into one
-#define TM_MSG_REQUEST  0b0110 //message split into multiple packets
-#define TM_MSG_CUSTOM   0b1111 //send custom data
+#define TM_MSG_OK     0b0000 //response
+#define TM_MSG_ERR    0b0001 //response
+#define TM_MSG_PING   0b0010
+#define TM_MSG_CUSTOM 0b0011
+//rest can be user defined
 
 /*----(NODE TYPES)----*/
 #define TM_NODE_TYPE_GATEWAY 0b00
@@ -303,9 +300,6 @@ public:
     inline void clear();
 
     inline bool empty();
-
-
-    TMPacketID createPacketID();
 
 
     /** @brief Build packet from specified data.
