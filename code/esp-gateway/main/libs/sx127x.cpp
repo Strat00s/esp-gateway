@@ -51,37 +51,7 @@ void SX127X::registerDigitalWrite(void (*func)(uint8_t, uint8_t), uint8_t high, 
     this->low                        = low;
     //this->flags.single.has_pin_write = true;
 }
-
-void SX127X::registerDigitalRead(int (*func)(uint8_t)) {
-    this->digitalRead = func;
-    //this->flags.single.has_pin_read  = true;
-}
-
-void SX127X::registerDelay(void (*func)(unsigned long)) {
-    this->delay                  = func;
-    //this->flags.single.has_delay = true;
-}
-
-void SX127X::registerMicros(unsigned long (*micros)()) {
-    this->micros = micros;
-    //this->flags.single.has_micros = true;
-}
 #endif
-
-void SX127X::registerSPIBeginTransfer(void (*func)()) {
-    this->SPIBeginTransfer              = func;
-    //this->flags.single.has_spi_start_tr = true;
-}
-
-void SX127X::registerSPIEndTransfer(void (*func)()) {
-    this->SPIEndTransfer              = func;
-    //this->flags.single.has_spi_end_tr = true;
-}
-
-void SX127X::registerSPITransfer(void (*func)(uint8_t, uint8_t *, size_t)) {
-    this->SPITransfer               = func;
-    //this->flags.single.has_transfer = true;
-}
 
 
 uint8_t SX127X::begin(float frequency, uint8_t sync_word, uint16_t preamble_len, uint8_t bandwidth, uint8_t spreading_factor, uint8_t coding_rate) {
@@ -160,7 +130,7 @@ uint8_t SX127X::begin(float frequency, uint8_t sync_word, uint16_t preamble_len,
     //enable crc
     setCRC(true);
 
-    return 0;
+    return SX127X_OK;
 }
 
 
@@ -171,9 +141,6 @@ void SX127X::reset() {
     delay(10);    //5ms just don't seem to be reliable with ESP
 }
 
-uint8_t SX127X::getVersion() {
-    return readRegister(REG_VERSION);
-}
 
 void SX127X::setMode(uint8_t mode) {
     //skip going into standby (most used mode) when already in standby
@@ -194,21 +161,13 @@ void SX127X::setModemMode(uint8_t modem) {
     setMode(SX127X_OP_MODE_STANDBY);
 }
 
-uint8_t SX127X::getModemMode() {
-    return readRegister(REG_OP_MODE, 7, 7);
-}
-
-
-void SX127X::setSyncWord(uint8_t sync_word) {
-    writeRegister(REG_SYNC_WORD, sync_word);
-}
 
 uint8_t SX127X::setPreambleLength(uint16_t preamble_len) {
     if (preamble_len < 6)
         return ERR_INVALID_PREAMBLE_LEN;
     writeRegister(REG_PREAMBLE_MSB, (uint8_t)((preamble_len >> 8) & 0xFF));
     writeRegister(REG_PREAMBLE_LSB, (uint8_t)(preamble_len & 0xFF));
-    return 0;
+    return SX127X_OK;
 }
 
 uint8_t SX127X::setFrequency(float frequency) {
@@ -229,7 +188,7 @@ uint8_t SX127X::setFrequency(float frequency) {
     //save the frequency
     this->frequency = frequency;
 
-    return 0;
+    return SX127X_OK;
 }
 
 uint8_t SX127X::setBandwidth(uint8_t bandwidth) {
@@ -254,7 +213,7 @@ uint8_t SX127X::setBandwidth(uint8_t bandwidth) {
 
     //check and enable/disable LDRO
     setLowDataRateOptimalization();
-    return 0;
+    return SX127X_OK;
 }
 
 uint8_t SX127X::setSpreadingFactor(uint8_t spreading_factor) {
@@ -292,7 +251,7 @@ uint8_t SX127X::setSpreadingFactor(uint8_t spreading_factor) {
 
     //check and enable/disable LDRO
     setLowDataRateOptimalization();
-    return 0;
+    return SX127X_OK;
 }
 
 uint8_t SX127X::setImplicitHeader() {
@@ -301,7 +260,7 @@ uint8_t SX127X::setImplicitHeader() {
 
     setRegister(REG_MODEM_CONFIG_1, LORA_IMPLICIT_HEADER, 0, 0);
 
-    return 0;
+    return SX127X_OK;
 }
 
 uint8_t SX127X::setExplicitHeader() {
@@ -310,11 +269,7 @@ uint8_t SX127X::setExplicitHeader() {
 
     setRegister(REG_MODEM_CONFIG_1, LORA_EXPLICIT_HEADER, 0, 0);
 
-    return 0;
-}
-
-void SX127X::setPayloadLength(uint8_t length) {
-    writeRegister(REG_PAYLOAD_LENGTH, length);
+    return SX127X_OK;
 }
 
 uint8_t SX127X::setCodingRate(uint8_t coding_rate) {
@@ -332,7 +287,7 @@ uint8_t SX127X::setCodingRate(uint8_t coding_rate) {
     //this->cr = (coding_rate + 0b00001000) >> 1;
     setRegister(REG_MODEM_CONFIG_1, coding_rate, 1, 3);
 
-    return 0;
+    return SX127X_OK;
 }
 
 uint8_t SX127X::setGain(uint8_t gain) {
@@ -352,7 +307,7 @@ uint8_t SX127X::setGain(uint8_t gain) {
         setRegister(REG_LNA, gain, 5, 7);
     }
 
-    return 0;
+    return SX127X_OK;
 }
 
 uint8_t SX127X::setCRC(bool enable) {
@@ -364,7 +319,7 @@ uint8_t SX127X::setCRC(bool enable) {
     else
         setRegister(REG_MODEM_CONFIG_2, LORA_RX_PAYLOAD_CRC_OFF, 2, 2);
     
-    return 0;
+    return SX127X_OK;
 }
 
 void SX127X::setLowDataRateOptimalization(bool force) {
@@ -378,12 +333,8 @@ void SX127X::setLowDataRateOptimalization(bool force) {
         setRegister(REG_MODEM_CONFIG_3, LORA_LOW_DATA_RATE_OPT_OFF, 3, 3);
 }
 
-void SX127X::setFrequencyHopping(uint8_t period) {
-    writeRegister(REG_HOP_PERIOD, HOP_PERIOD_OFF);
-}
-
 uint8_t SX127X::setRxTimeout(uint16_t symbol_cnt) {
-    uint8_t status = 0;
+    uint8_t status = SX127X_OK;
     if (symbol_cnt < 4 || symbol_cnt > 1023) {
         status = WARN_INVALID_TIMEOUT_SYMBOL_CNT;
         symbol_cnt = 100;
@@ -412,7 +363,7 @@ uint8_t SX127X::setCurrentLimit(uint8_t max_current) {
     else if (max_current <= 240)
         setRegister(REG_OCP, ((max_current + 30) / 10) | SX127X_OCP_ON, 0, 5);
 
-    return 0;
+    return SX127X_OK;
 }
 
 uint8_t SX127X::setPower(int8_t power, bool pa_boost) {
@@ -449,7 +400,7 @@ uint8_t SX127X::setPower(int8_t power, bool pa_boost) {
         setRegister(REG_PA_DAC, SX127X_PA_BOOST_OFF, 0, 2);
     }
 
-    return 0;
+    return SX127X_OK;
 }
 
 
@@ -587,7 +538,7 @@ uint8_t SX127X::receiveBlocking(uint8_t *data, uint8_t length) {
     uint8_t status = 0;
     //calcualte timeout (us)
     uint32_t timeout = (symbol_cnt * float(uint16_t(1) << this->sf) / this->bw) * 1000;
-    uint32_t start = micros(); 
+    uint32_t start = micros();
 
     //wait for successful reception or exit on timeout
     while (!digitalRead(this->dio0)) {
@@ -687,7 +638,7 @@ uint8_t SX127X::checkPayloadIntegrity() {
         return ERR_INVALID_HEADER;
     if (getIrqFlags() & IRQ_FLAG_PAYLOAD_CRC_ERROR)
         return ERR_CRC_MISMATCH;
-    return 0;
+    return SX127X_OK;
 }
 
 uint8_t SX127X::getPayloadLength() {
@@ -698,22 +649,17 @@ uint8_t SX127X::getPayloadLength() {
     return readRegister(REG_RX_NB_BYTES);
 }
 
-void SX127X::readData(uint8_t *data, uint8_t length) {
+uint8_t SX127X::readData(uint8_t *data, uint8_t length) {
+    if (data == nullptr)
+        return ERR_NULL;
+    
     uint8_t payload_length = getPayloadLength();
 
-    if (length > payload_length || length == 0)
+    if (length > payload_length)
         length = payload_length;
 
     readRegistersBurst(REG_FIFO, data, length);
-}
-
-
-uint8_t SX127X::getIrqFlags() {
-    return readRegister(REG_IRQ_FLAGS);
-}
-
-void SX127X::clearIrqFlags() {
-    writeRegister(REG_IRQ_FLAGS, 0xFF);
+    return length < payload_length ? ERR_TRUNCATED : SX127X_OK;
 }
 
 

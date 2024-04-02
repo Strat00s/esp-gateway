@@ -217,7 +217,9 @@ private:
     void setBits(uint8_t *x, uint8_t val, uint8_t msb, uint8_t lsb);
 
     /** @brief Get specific bits from x shifted to start from 1st (lsb) bit*/
-    uint8_t getBits(uint8_t x, uint8_t msb, uint8_t lsb);
+    inline uint8_t TMPacket::getBits(uint8_t x, uint8_t msb, uint8_t lsb) {
+        return (x >> lsb) & ((1 << (msb - lsb + 1)) - 1);
+    }
 
 public:
     uint8_t raw[TM_PACKET_SIZE];
@@ -226,27 +228,37 @@ public:
     ~TMPacket();
 
 
-    inline void setVersion(uint8_t version);
+    inline void setVersion(uint8_t version) {
+        raw[TM_VERSION_POS] = version;
+    }
 
-    inline void setSource(uint8_t source);
+    inline void setSource(uint8_t source) {
+        raw[TM_SOURCE_POS] = source;
+    }
 
-    inline void setDestination(uint8_t destination);
+    inline void setDestination(uint8_t destination) {
+        raw[TM_DESTINATION_POS] = destination;
+    }
 
-    inline void setSequence(uint8_t sequence);
+    inline void setSequence(uint8_t sequence) {
+        raw[TM_SEQUENCE_POS] = sequence;
+    }
 
-    inline void setRepeatCount(uint8_t repeat);
+    void setRepeatCount(uint8_t repeat);
 
-    inline void setNodeType(uint8_t node_type);
+    void setNodeType(uint8_t node_type);
 
-    inline void setMessageType(uint8_t msg_type);
+    void setMessageType(uint8_t msg_type);
 
     /** @brief Set entire flag field at once
      *
-     * @param flags 
+     * @param flags
      */
-    inline void setFlags(uint8_t flags);
+    inline void setFlags(uint8_t flags) {
+        raw[TM_FLAGS_POS] = flags;
+    }
 
-    inline void setDataLength(uint8_t length);
+    void setDataLength(uint8_t length);
 
     /** @brief Copies specified data into the packet.
      * 
@@ -254,33 +266,53 @@ public:
      * @param len Length of the data.
      * @return Number of copied bytes, which can be smaller than len.
      */
-    inline uint8_t setData(uint8_t *data, uint8_t len);
+    uint8_t setData(uint8_t *data, uint8_t len);
 
 
-    inline uint8_t getVersion();
-    
-    inline uint8_t getSource();
-    
-    inline uint8_t getDestination();
-    
-    inline uint8_t getSequence();
-    
-    inline uint8_t getRepeatCount();
-    
-    inline uint8_t getNodeType();
-    
-    inline uint8_t getMessageType();
-    
-    inline uint8_t getFlags();
-    
-    inline uint8_t getDataLength();
+    inline uint8_t getVersion() {
+        return raw[TM_VERSION_POS];
+    }
+
+    inline uint8_t getSource() {
+        return raw[TM_SOURCE_POS];
+    }
+
+    inline uint8_t getDestination() {
+        return raw[TM_DESTINATION_POS];
+    }
+
+    inline uint8_t getSequence() {
+        return raw[TM_SEQUENCE_POS];
+    }
+
+    inline uint8_t getRepeatCount() {
+        return getBits(raw[TM_FLAGS_POS], TM_RPT_CNT_MSB, TM_RPT_CNT_LSB);
+    }
+
+    inline uint8_t getNodeType() {
+        return getBits(raw[TM_FLAGS_POS], TM_NODE_TYPE_MSB, TM_NODE_TYPE_LSB);
+    }
+
+    inline uint8_t getMessageType() {
+        return getBits(raw[TM_FLAGS_POS], TM_MSG_TYPE_MSB, TM_MSG_TYPE_LSB);
+    }
+
+    inline uint8_t getFlags() {
+        return raw[TM_FLAGS_POS];
+    }
+
+    inline uint8_t getDataLength() {
+        return raw[TM_DATA_LEN_POS];
+    }
 
     /** @brief Get packet data as a pointer.
      * Can be used for direct write instead of copying data into the packet.
-     * 
+     *
      * @return Returns a pointer to the interla packet data structure.
      */
-    inline uint8_t *getData();
+    inline uint8_t *getData() {
+        return raw + TM_DATA_POS;
+    }
 
     /** @brief Copies packet data to buffer.
      * 
@@ -288,18 +320,24 @@ public:
      * @param len Length of the buffer.
      * @return Number of copied bytes. 
      */
-    inline uint8_t getData(uint8_t *buffer, uint8_t len);
+    uint8_t getData(uint8_t *buffer, uint8_t len);
 
 
     /** @brief Size of the used space inside the packet.
-     * 
+     *
      * @return Header size + size of data currently stored inside the packet.
      */
-    inline uint8_t size();
-
-    inline void clear();
-
-    inline bool empty();
+    inline uint8_t TMPacket::size() {
+        return TM_HEADER_LENGTH + raw[TM_DATA_LEN_POS];
+    }
+    
+    inline void TMPacket::clear() {
+        memset(raw, 0, TM_PACKET_SIZE);
+    }
+    
+    inline bool TMPacket::empty() {
+        return !raw[TM_SOURCE_POS] && !raw[TM_DESTINATION_POS];
+    }
 
 
     /** @brief Build packet from specified data.

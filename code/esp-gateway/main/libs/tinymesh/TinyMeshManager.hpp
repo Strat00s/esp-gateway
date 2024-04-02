@@ -1,6 +1,6 @@
 #include "TinyMeshPacket.hpp"
 #include "TinyMeshPacketID.hpp"
-#include "interfaces/InterfaceManager.hpp"
+#include "../interfaces/InterfaceManager.hpp"
 
 
 #define TMM_QUEUE_SIZE 5
@@ -32,7 +32,7 @@
 
 class TinyMeshManager {
 private:
-    InterfaceManagerBase *if_manager = nullptr;
+    InterfaceManager *if_manager = nullptr;
     
     uint8_t address      = TM_DEFAULT_ADDRESS;
     uint8_t gateway      = TM_BROADCAST_ADDRESS;
@@ -52,16 +52,11 @@ private:
     uint8_t last_ret;
 
 
-    void delay(uint32_t ms) {
+    unsigned long (*millis)();
 
-    }
 
-    uint32_t millis() {
-        return 0;
-    }
-
-    uint8_t requestHandler(TMPacket *request, bool fwd);
-    uint8_t responseHandler(TMPacket *request, TMPacket *response);
+    uint8_t (*requestHandler)(TMPacket *request, bool fwd);
+    uint8_t (*responseHandler)(TMPacket *request, TMPacket *response);
 
 
     /** @brief Check if packet is a response to the packet being currently sent.
@@ -70,13 +65,13 @@ private:
      * @return 
      */
     bool isResponse(TMPacket *request, TMPacket *response) {
-        //response source == request destination OR request was register AND broadcast
+        //response source == request destination
         // AND
         //response destination == response source
         // AND
         //response is OK OR ERR
-        return ((response->getSource() == request->getDestination() || (request->getDestination() == TM_BROADCAST_ADDRESS && request->getMessageType() == TM_MSG_REGISTER)) &&
-                 response->getDestination() == request->getSource() &&
+        return (response->getSource() == request->getDestination() &&
+                response->getDestination() == request->getSource() &&
                 (response->getMessageType() == TM_MSG_OK || response->getMessageType() == TM_MSG_ERR));
     }
 
@@ -170,20 +165,33 @@ private:
 
 
 public:
-    TinyMeshManager(InterfaceManagerBase *interface_manager) {
+    TinyMeshManager(InterfaceManager *interface_manager) {
         this->if_manager = interface_manager;
     }
-    TinyMeshManager(InterfaceManagerBase *interface_manager, uint8_t address) : TinyMeshManager(interface_manager) {
+    TinyMeshManager(InterfaceManager *interface_manager, uint8_t address) : TinyMeshManager(interface_manager) {
         this->address = address;
     }
-    TinyMeshManager(InterfaceManagerBase *interface_manager, uint8_t address, uint8_t node_type) : TinyMeshManager(interface_manager, address) {
+    TinyMeshManager(InterfaceManager *interface_manager, uint8_t address, uint8_t node_type) : TinyMeshManager(interface_manager, address) {
         this->node_type = node_type;
     }
-    TinyMeshManager(InterfaceManagerBase *interface_manager, uint8_t address, uint8_t node_type, uint8_t gateway) : TinyMeshManager(interface_manager, address, node_type) {
+    TinyMeshManager(InterfaceManager *interface_manager, uint8_t address, uint8_t node_type, uint8_t gateway) : TinyMeshManager(interface_manager, address, node_type) {
         this->gateway = gateway;
     }
 
     ~TinyMeshManager();
+
+
+    inline void registerMillis(unsigned long (*millis)()) {
+        this->millis = millis;
+    }
+
+    inline void registerRequestHandler(uint8_t (*func)(TMPacket *, bool)) {
+        this->requestHandler = func;
+    }
+
+    inline void registerResponseHandler(uint8_t (*func)(TMPacket *, TMPacket *)) {
+        this->responseHandler = func;
+    }
 
 
     /** @brief Set this node address*/

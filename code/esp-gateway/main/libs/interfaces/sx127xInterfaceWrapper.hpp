@@ -14,17 +14,41 @@ public:
         this->lora = lora;
     }
 
+    bool begin(float freq, uint8_t sync_word, uint16_t preamble_len, uint8_t bw, uint8_t sf, uint8_t cr) {
+        lora->reset();
+        last_ret = lora->begin(freq, sync_word, preamble_len, bw, sf, cr);
+        return last_ret ? false : true;
+    }
+
+
+    /** @brief Start continuous LORA recepetion
+     * 
+     * @return Always returns true
+     */
+    bool startReception() {
+        lora->receiveContinuous();
+        return true;
+    }
+
+    /** @brief Stop LORA recepetion
+     * 
+     * @return Always returns true
+     */
+    bool stopReception() {
+        lora->setMode(SX127X_OP_MODE_STANDBY);
+        return true;
+    }
+
+
     /** @brief Transmit data on underlying LORA device.
      * 
      * @param data Data to send/transmit. They will be overwritten by "junk" since the same buffer is used to save returned SPI transaction data.
      * @param len Length of data to be transmitted.
-     * @return 0 on success. IRQ flags on failure.
+     * @return True on success, false otherwise. IRQ flags stored as status.
      */
-    uint8_t sendData(uint8_t *data, uint8_t len) {
-        uint8_t ret = lora->transmit(data, len);
-        if (ret & IRQ_FLAG_TX_DONE)
-            return 0;
-        return ret;
+    bool sendData(uint8_t *data, uint8_t len) {
+        last_ret = lora->transmit(data, len);
+        return last_ret & IRQ_FLAG_TX_DONE;
     }
 
     /** @brief Retrieve data from underlying LORA device.
@@ -34,30 +58,21 @@ public:
      * @param len Length of received data.
      * @return 0 on success, LORA ERR_... defines on error.
      */
-    uint8_t getData(uint8_t *buf, uint8_t *len){
+    bool getData(uint8_t *buf, uint8_t *len) {
         lora->setMode(SX127X_OP_MODE_STANDBY);
-        uint8_t ret = lora->checkPayloadIntegrity();
-        if (ret) {
+        last_ret = lora->checkPayloadIntegrity();
+        if (last_ret) {
             lora->clearIrqFlags();
-            return ret;
+            return false;
         }
 
-        lora->readData(buf);
+        last_ret = lora->readData(buf, *len);
         *len = lora->getPayloadLength();
         lora->clearIrqFlags();
 
         lora->receiveContinuous();
 
-        return ret;
-    }
-
-    /** @brief Start continuous LORA recepetion
-     * 
-     * @return Always returns 0;
-     */
-    uint8_t startReception(){
-        lora->receiveContinuous();
-        return 0;
+        return true;
     }
 
     /** @brief Check if interface has any new data

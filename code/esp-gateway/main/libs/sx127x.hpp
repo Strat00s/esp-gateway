@@ -295,6 +295,7 @@
 //                                              0x4F
 
 
+#define SX127X_OK                       0
 
 //Errors
 #define ERR_INVALID_PREAMBLE_LEN        1
@@ -311,6 +312,8 @@
 #define ERR_CRC_MISMATCH                12
 #define ERR_INVALID_HEADER              13
 #define ERR_INNVALID_FREQUENCY          14
+#define ERR_NULL                        15
+#define ERR_TRUNCATED                   16
 
 //Warnings
 #define WARN_INVALID_TIMEOUT_SYMBOL_CNT 1
@@ -327,17 +330,17 @@ private:
     uint8_t dio1 = 0;
 
     //pin control variables
-  #ifndef ARDUINO
-    uint8_t input;
-    uint8_t output;
-    uint8_t high = 1;
-    uint8_t low  = 0;
-  #else
+#ifdef ARDUINO
     uint8_t input  = INPUT;
     uint8_t output = OUTPUT;
     uint8_t high   = HIGH;
     uint8_t low    = LOW;
-  #endif
+#else
+    uint8_t input;
+    uint8_t output;
+    uint8_t high = 1;
+    uint8_t low  = 0;
+#endif
 
 
     //default variables for internal calculations
@@ -349,13 +352,13 @@ private:
 
     //TODO make them arduino compatible by default?
     //callbacks
-  #ifndef ARDUINO
+#ifndef ARDUINO
     void (*pinMode)(uint8_t pin, uint8_t mode);
     void (*digitalWrite)(uint8_t pin, uint8_t val);
     int (*digitalRead)(uint8_t pin);
     void (*delay)(unsigned long);
     unsigned long (*micros)();
-  #endif
+#endif
     void (*SPIBeginTransfer)();
     void (*SPIEndTransfer)();
     /** @brief To be implemented by user. Transfer function for sending
@@ -377,15 +380,28 @@ public:
     SX127X(uint8_t cs, uint8_t rst, uint8_t dio0, uint8_t dio1);
     ~SX127X();
 
-  #ifndef ARDUINO
+#ifndef ARDUINO
     void registerPinMode(void (*func)(uint8_t, uint8_t), uint8_t input, uint8_t output);
     void registerDigitalWrite(void (*func)(uint8_t, uint8_t), uint8_t high = 1, uint8_t low = 0);
-    void registerDigitalRead(int (*func)(uint8_t));
-    void registerDelay(void (*func)(unsigned long));
-    void registerMicros(unsigned long (*micros)());
+    inline void registerDigitalRead(int (*func)(uint8_t)) {
+        this->digitalRead = func;
+    }
+
+    inline void registerDelay(void (*func)(unsigned long)) {
+        this->delay                  = func;
+    }
+
+    inline void registerMicros(unsigned long (*micros)()) {
+        this->micros = micros;
+    }
 #endif
-    void registerSPIBeginTransfer(void (*func)());
-    void registerSPIEndTransfer(void (*func)());
+    inline void registerSPIBeginTransfer(void (*func)()) {
+        this->SPIBeginTransfer              = func;
+    }
+    inline void registerSPIEndTransfer(void (*func)()) {
+        this->SPIEndTransfer              = func;
+    }
+
     /** @brief The underlying callback must be implemented by the user.
      * Transfer function for sending and receiveing data over SPI.
      *
@@ -395,7 +411,10 @@ public:
      * or will be filled with read data)
      * @param length Length of buffer
      */
-    void registerSPITransfer(void (*func)(uint8_t, uint8_t *, size_t));
+    inline void registerSPITransfer(void (*func)(uint8_t, uint8_t *, size_t)) {
+        this->SPITransfer               = func;
+    }
+
 
     /** @brief Initialize module to it's default settings
      * 
@@ -404,7 +423,8 @@ public:
      * @param preamble_len length of the preamble
      * @return uint8_t 
      */
-    uint8_t begin(float frequency, uint8_t sync_word = 0x12, uint16_t preamble_len = 8, uint8_t bandwidth = LORA_BANDWIDTH_125kHz, uint8_t spreading_factor = LORA_SPREADING_FACTOR_7, uint8_t coding_rate = LORA_CODING_RATE_4_5);
+    uint8_t begin(float frequency, uint8_t sync_word = 0x12, uint16_t preamble_len = 8, uint8_t bandwidth = LORA_BANDWIDTH_125kHz,
+                  uint8_t spreading_factor = LORA_SPREADING_FACTOR_7, uint8_t coding_rate = LORA_CODING_RATE_4_5);
 
 
     /** @brief Reset the module*/
@@ -414,7 +434,9 @@ public:
      * 
      * @return Module version stored in register 
      */
-    uint8_t getVersion();
+    inline uint8_t getVersion() {
+        return readRegister(REG_VERSION);
+    }
 
     /** @brief Set operation mode of the module
      * 
@@ -442,7 +464,9 @@ public:
      * 
      * @return Current modem mdoe  
      */
-    uint8_t getModemMode();
+    inline uint8_t getModemMode() {
+        return readRegister(REG_OP_MODE, 7, 7);
+    }
 
 
     /** @brief Set the sync word for keeping modules on different "networks"
@@ -450,7 +474,9 @@ public:
      * @param sync_word desired sync word. Can be anything.
      * 0x12/0x1424 is default. 0x34/0x3444 is reserved for LoRaWAN.
      */
-    void setSyncWord(uint8_t sync_word);
+    inline void setSyncWord(uint8_t sync_word) {
+        writeRegister(REG_SYNC_WORD, sync_word);
+    }
 
     /** @brief Set the preamble length used to syncrhonize receiver
      * with the incoming data
@@ -523,7 +549,9 @@ public:
      * 
      * @param length Payload length
      */
-    void setPayloadLength(uint8_t length);
+    inline void setPayloadLength(uint8_t length) {
+        writeRegister(REG_PAYLOAD_LENGTH, length);
+    }
 
     /** @brief Set the coding rate
      * 
@@ -569,7 +597,9 @@ public:
      * @attention Hopping period (time between channel change) is then defined as Ts*frequency hopping period. Ts = symbol period
      * @param period period in ms(???) in which to change the band
      */
-    void setFrequencyHopping(uint8_t period);
+    inline void setFrequencyHopping(uint8_t period) {
+        writeRegister(REG_HOP_PERIOD, HOP_PERIOD_OFF);
+    }
 
     /** @brief Set timeout period when in single receive mode. 
      * When invalid symbol count is provided, the function will return 
@@ -677,13 +707,21 @@ public:
      * as long as the received data length)
      * @param length Length of data to be received. Only used when using
      * lowest possible spreading factor LORA_SPREADING_FACTOR_6
+     * 
+     * @return 0 on success.
+     * ERR_NULL if data are NULL.
+     * ERR_TRUNCATED if data buffer is shorter than received data.
      */
-    void readData(uint8_t *data, uint8_t length = 0);
+    uint8_t readData(uint8_t *data, uint8_t length);
 
 
-    uint8_t getIrqFlags();
+    inline uint8_t getIrqFlags() {
+        return readRegister(REG_IRQ_FLAGS);
+    }
 
-    void clearIrqFlags();
+    inline void clearIrqFlags() {
+        writeRegister(REG_IRQ_FLAGS, 0xFF);
+    }
 
 
     /** @brief Make entire SPI transaction 

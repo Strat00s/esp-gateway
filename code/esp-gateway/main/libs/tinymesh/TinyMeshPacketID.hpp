@@ -22,7 +22,9 @@ private:
     void setBits(uint8_t *x, uint8_t val, uint8_t msb, uint8_t lsb);
 
     /** @brief Get specific bits from x shifted to start from 1st (lsb) bit*/
-    uint8_t getBits(uint8_t x, uint8_t msb, uint8_t lsb);
+    inline uint8_t getBits(uint8_t x, uint8_t msb, uint8_t lsb) {
+        return (x >> lsb) & ((1 << (msb - lsb + 1)) - 1);
+    }
 
 public:
     uint8_t raw[4];
@@ -33,41 +35,59 @@ public:
     ~TMPacketID();
 
 
-    inline void setAll(uint8_t source, uint8_t destination, uint8_t sequence, uint8_t message_type, uint8_t repeat_cnt) {
-        setSource(source);
-        setDestination(destination);
-        setSequence(sequence);
-        setMessageType(message_type);
-        setRepeatCount(repeat_cnt);
+    void setAll(uint8_t source, uint8_t destination, uint8_t sequence, uint8_t message_type, uint8_t repeat_cnt);
+
+    inline void setSource(uint8_t source){
+        raw[TMPID_SOURCE_POS] = source;
     }
 
-    inline void setSource(uint8_t source);
+    inline void setDestination(uint8_t destination){
+        raw[TMPID_DESTINATION_POS] = destination;
+    }
 
-    inline void setDestination(uint8_t destination);
+    inline void setSequence(uint8_t sequence){
+        raw[TMPID_SEQUENCE_POS] = sequence;
+    }
 
-    inline void setSequence(uint8_t sequence);
-    
-    inline void setFlags(uint8_t flags);
+    inline void setFlags(uint8_t flags){
+        raw[TMPID_FLAGS_POS] = flags;
+    }
 
-    inline void setRepeatCount(uint8_t repeat_cnt);
+    void setRepeatCount(uint8_t repeat_cnt);
 
-    inline void setMessageType(uint8_t message_type);
+    void setMessageType(uint8_t message_type);
 
 
-    inline uint8_t getSource();
+    inline uint8_t getSource(){
+        return raw[TMPID_SOURCE_POS];
+    }
 
-    inline uint8_t getDestination();
+    inline uint8_t getDestination(){
+        return raw[TMPID_DESTINATION_POS];
+    }
 
-    inline uint8_t getSequence();
+    inline uint8_t getSequence(){
+        return raw[TMPID_SEQUENCE_POS];
+    }
 
-    inline uint8_t getFlags();
+    inline uint8_t getFlags(){
+        return raw[TMPID_FLAGS_POS];
+    }
 
-    inline uint8_t getRepeatCount();
+    inline uint8_t getRepeatCount(){
+        return getBits(raw[TMPID_FLAGS_POS], TMPID_RPT_CNT_MSB, TMPID_RPT_CNT_LSB);
+    }
 
-    inline uint8_t getMessageType();
+    inline uint8_t getMessageType(){
+        return getBits(raw[TMPID_FLAGS_POS], TMPID_MSG_TYPE_MSB, TMPID_MSG_TYPE_LSB);
+    }
 
-    inline void clear();
+    inline void clear(){
+        memset(raw, 0, 4);
+    }
 
-    inline bool empty();
+    inline bool empty(){
+        return raw[TMPID_SOURCE_POS] == 0 && raw[TMPID_DESTINATION_POS] == 0;
+    }
 
 };

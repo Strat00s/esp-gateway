@@ -5,26 +5,30 @@
 #include "interfaceWrapper.hpp"
 
 
-class InterfaceManagerBase {
-protected:
-    uint8_t if_cnt = 0;
+//class InterfaceManagerBase {
+//protected:
+//    uint8_t if_cnt = 0;
+//
+//public:
+//    virtual ~InterfaceManagerBase() {}
+//    // Define virtual methods that will be implemented by InterfaceManager<N>
+//
+//    virtual uint8_t addInterface(InterfaceWrapper *interface) = 0;
+//    virtual uint8_t getInterfaceCount() = 0;
+//    virtual uint8_t hasData() = 0;
+//    virtual uint8_t getNextData(uint8_t *data, uint8_t *len) = 0;
+//    virtual uint8_t sendData(uint8_t *data, uint8_t len) = 0;
+//    virtual uint8_t sendData(uint8_t if_id, uint8_t *data, uint8_t *len) = 0;
+//};
 
-public:
-    virtual ~InterfaceManagerBase() {}
-    // Define virtual methods that will be implemented by InterfaceManager<N>
 
-    virtual uint8_t addInterface(InterfaceWrapper *interface) = 0;
-    virtual uint8_t getInterfaceCount() = 0;
-    virtual uint8_t hasData() = 0;
-    virtual uint8_t getNextData(uint8_t *data, uint8_t *len) = 0;
-    virtual uint8_t sendData(uint8_t *data, uint8_t len) = 0;
-    virtual uint8_t sendData(uint8_t if_id, uint8_t *data, uint8_t *len) = 0;
-};
+#define IF_COUNT 1
 
-template <uint8_t N>
-class InterfaceManager : public InterfaceManagerBase {
+
+class InterfaceManager {
 private:
-    InterfaceWrapper *interfaces[N] = {nullptr};
+    InterfaceWrapper *interfaces[IF_COUNT] = {nullptr};
+    uint8_t if_cnt = 0;
 
 public:
     InterfaceManager(/* args */);
@@ -34,7 +38,7 @@ public:
      * @return 0 on success, 1 if no space left
      */
     uint8_t addInterface(InterfaceWrapper *interface) {
-        if (if_cnt >= N)
+        if (if_cnt >= IF_COUNT)
             return 1;
         
         interfaces[if_cnt] = interface;
@@ -52,7 +56,7 @@ public:
      */
     uint8_t hasData() {
         uint8_t data_cnt = 0;
-        for (uint8_t i = 0; i < N; i++) {
+        for (uint8_t i = 0; i < IF_COUNT; i++) {
             if (interfaces[i] == nullptr)
                 continue;
 
@@ -74,7 +78,7 @@ public:
      * Other values are interface specific.
      */
     uint8_t getNextData(uint8_t *data, uint8_t *len) {
-        for (uint8_t i = 0; i < N; i++) {
+        for (uint8_t i = 0; i < IF_COUNT; i++) {
             if (interfaces[i] == nullptr)
                 continue;
 
@@ -97,7 +101,7 @@ public:
         uint8_t ret = 0;
         uint8_t len_cp = len;
         for (uint8_t i = 0; i < if_cnt; i++) {
-            ret |= interfaces[if_cnt]->senData(data, &len);
+            ret |= interfaces[if_cnt]->sendData(data, len);
             len = len_cp;
         }
         return ret;
@@ -111,8 +115,8 @@ public:
      * @return 0 on success.
      * Other values are interface specific.
      */
-    uint8_t sendData(uint8_t if_id, uint8_t *data, uint8_t *len) {
-        return interfaces[if_id]->senData(data, len);
+    uint8_t sendData(uint8_t if_id, uint8_t *data, uint8_t len) {
+        return interfaces[if_id]->sendData(data, len);
     }
 };
 
