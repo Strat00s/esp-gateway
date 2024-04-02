@@ -77,11 +77,9 @@ public:
      * @param data Buffer where to store data.
      * @param len Length of the buffer.
      * Overwriten with the recieved data length that can fit to the buffer.
-     * @return 0 on success.
-     * 25 if there are no data.
-     * Other values are interface specific.
+     * @return 0 on success, 1 on failure, 2 on no data
      */
-    uint8_t getNextData(uint8_t *data, uint8_t *len) {
+    bool getNextData(uint8_t *data, uint8_t *len) {
         for (uint8_t i = 0; i < IF_COUNT; i++) {
             if (interfaces[i] == nullptr)
                 continue;
@@ -90,7 +88,7 @@ public:
                 return interfaces[i]->getData(data, len);
         }
 
-        return 255;
+        return 2;
     }
 
 

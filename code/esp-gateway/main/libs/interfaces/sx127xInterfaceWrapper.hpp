@@ -56,14 +56,14 @@ public:
      * 
      * @param buf Buffer to which to copy received data. Must be 256B long (maximal data length).
      * @param len Length of received data.
-     * @return 0 on success, LORA ERR_... defines on error.
+     * @return 0 on success
      */
     bool getData(uint8_t *buf, uint8_t *len) {
         lora->setMode(SX127X_OP_MODE_STANDBY);
         last_ret = lora->checkPayloadIntegrity();
         if (last_ret) {
             lora->clearIrqFlags();
-            return false;
+            return 1;
         }
 
         last_ret = lora->readData(buf, *len);
@@ -72,7 +72,7 @@ public:
 
         lora->receiveContinuous();
 
-        return true;
+        return 0;
     }
 
     /** @brief Check if interface has any new data

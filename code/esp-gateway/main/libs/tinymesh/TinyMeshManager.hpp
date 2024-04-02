@@ -44,7 +44,7 @@ private:
     uint8_t send_index = 0;
     uint8_t curr_index = 0;
     uint8_t queue_len  = 0;
-    int repeat_time    = 0;
+    unsigned long repeat_time = 0;
 
     TMPacketID pid_list[TMM_PID_SIZE];
     uint8_t pid_index = 0;
@@ -146,15 +146,18 @@ private:
             return TMM_PACKET_REQUEST;
 
         if (packet.getDestination() == TM_BROADCAST_ADDRESS)
-            return TMM_PACKET_REQUEST | TMM_PACKET_FORWARD;
+            return TMM_PACKET_FWD_REQUEST;
 
         return TMM_PACKET_FORWARD;
     }
 
     uint8_t handleRequest(TMPacket *request, bool fwd) {
         if (request->getMessageType() == TM_MSG_PING){
-            if (fwd)
+            printf("ping\n");
+            if (fwd) {
+                printf("To be forwarded\n");
                 return TMM_OK;
+            }
             
             uint8_t data = request->getData()[0];
             return sendResponse(request->getSource(), TM_MSG_OK, &data, 1);
@@ -223,6 +226,7 @@ public:
 
 
     uint8_t sendResponse(uint8_t destination, uint8_t message_type, uint8_t *data = nullptr, uint8_t length = 0) {
+        printf("Sending response\n");
         last_ret = packet.buildPacket(address, destination, sequence_num++, node_type, message_type, 0, data, length);
         if (last_ret)
             return TMM_ERR_BUILD_PACKET;
@@ -313,24 +317,29 @@ public:
         //got some data
         if (!last_ret) {
             last_ret = classifyPacket();
+            printf("classify: %d\n", last_ret);
 
             //not a duplicate packet
             if (savePacketID(&packet)) {
+                printf("new id\n");
                 //handle request
-                if (last_ret & TMM_PACKET_REQUEST)
-                    last_ret = handleRequest(&packet, last_ret & TMM_PACKET_FORWARD);
-
+                if (last_ret == TMM_PACKET_REQUEST || last_ret == TMM_PACKET_FWD_REQUEST) {
+                    printf("request\n");
+                    last_ret = handleRequest(&packet, last_ret == TMM_PACKET_FWD_REQUEST);
+                }
                 //handle response
-                if (last_ret & TMM_PACKET_RESPONSE)
+                if (last_ret == TMM_PACKET_RESPONSE)
                     last_ret = responseHandler(&send_queue[curr_index], &packet);
 
                 //forward packet first
-                if (last_ret & TMM_PACKET_FORWARD) {
+                if (last_ret == TMM_PACKET_FORWARD) {
                     if (packet.getMessageType() == TM_MSG_PING)
                         packet.getData()[0]++;
                     if_manager->sendData(packet.raw, packet.size());
                 }
             }
+            else
+                printf("DUPLICIT\n");
         }
 
         if (!queue_len)

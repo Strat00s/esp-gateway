@@ -490,7 +490,7 @@ void SX127X::errataFix(bool receive) {
 }
 
 
-uint8_t SX127X::transmit(uint8_t *data, uint8_t length, uint8_t soft) {
+uint8_t SX127X::transmit(uint8_t *data, uint8_t length, bool soft) {
     setMode(SX127X_OP_MODE_STANDBY);
 
     //set IO mapping for dio0 to be end of transmission
