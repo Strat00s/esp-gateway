@@ -324,10 +324,10 @@ private:
     uint8_t chip_version = 0;
 
     //pins
-    uint8_t cs   = 0;
-    uint8_t rst  = 0;
-    uint8_t dio0 = 0;
-    uint8_t dio1 = 0;
+    int cs   = -1;
+    int rst  = -1;
+    int dio0 = -1;
+    int dio1 = -1;
 
     //pin control variables
 #ifdef ARDUINO
@@ -700,6 +700,16 @@ public:
      * @return Length of the last received payload
      */
     uint8_t getPayloadLength();
+
+    /** @brief Check if any new data were received, by either reading the 
+     * 
+     * @param soft 
+     * @return true 
+     * @return false 
+     */
+    inline bool hasData(bool soft = false) {
+        return soft ? (readRegister(REG_IRQ_FLAGS) & IRQ_FLAG_RX_DONE) : digitalRead(this->dio0);
+    }
 
     /** @brief Read received data from FIFO
      * 

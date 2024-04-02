@@ -145,7 +145,7 @@ if no response, use that address
 
 //Flag bit locations
 #define TM_NODE_TYPE_LSB 0
-#define TM_NODE_TYPE_MSB 1
+#define TM_NODE_TYPE_MSB 0
 #define TM_MSG_TYPE_LSB  2
 #define TM_MSG_TYPE_MSB  5
 #define TM_RPT_CNT_LSB   6
@@ -193,10 +193,12 @@ if no response, use that address
 //rest can be user defined
 
 /*----(NODE TYPES)----*/
-#define TM_NODE_TYPE_GATEWAY 0b00
-#define TM_NODE_TYPE_NODE    0b01
-#define TM_NODE_TYPE_LP_NODE 0b10
-#define TM_NODE_TYPE_OTHER   0b11
+//#define TM_NODE_TYPE_GATEWAY 0b00
+//#define TM_NODE_TYPE_NODE    0b01
+//#define TM_NODE_TYPE_LP_NODE 0b10
+//#define TM_NODE_TYPE_OTHER   0b11
+#define TM_NODE_TYPE_NORMAL 0
+#define TM_NODE_TYPE_LP     1
 
 
 //Packet header size
@@ -217,15 +219,15 @@ private:
     void setBits(uint8_t *x, uint8_t val, uint8_t msb, uint8_t lsb);
 
     /** @brief Get specific bits from x shifted to start from 1st (lsb) bit*/
-    inline uint8_t TMPacket::getBits(uint8_t x, uint8_t msb, uint8_t lsb) {
+    inline uint8_t getBits(uint8_t x, uint8_t msb, uint8_t lsb) {
         return (x >> lsb) & ((1 << (msb - lsb + 1)) - 1);
     }
 
 public:
     uint8_t raw[TM_PACKET_SIZE];
 
-    TMPacket();
-    ~TMPacket();
+    //TMPacket() {}
+    //~TMPacket() {}
 
 
     inline void setVersion(uint8_t version) {
@@ -327,15 +329,15 @@ public:
      *
      * @return Header size + size of data currently stored inside the packet.
      */
-    inline uint8_t TMPacket::size() {
+    inline uint8_t size() {
         return TM_HEADER_LENGTH + raw[TM_DATA_LEN_POS];
     }
     
-    inline void TMPacket::clear() {
+    inline void clear() {
         memset(raw, 0, TM_PACKET_SIZE);
     }
     
-    inline bool TMPacket::empty() {
+    inline bool empty() {
         return !raw[TM_SOURCE_POS] && !raw[TM_DESTINATION_POS];
     }
 

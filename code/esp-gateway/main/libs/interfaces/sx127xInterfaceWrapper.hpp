@@ -4,7 +4,7 @@
 #include "libs/sx127x.hpp"
 
 
-class sx127xInterfaceWrapper : protected InterfaceWrapper{
+class sx127xInterfaceWrapper : public InterfaceWrapper{
 private:
     SX127X *lora;
 
@@ -14,11 +14,11 @@ public:
         this->lora = lora;
     }
 
-    bool begin(float freq, uint8_t sync_word, uint16_t preamble_len, uint8_t bw, uint8_t sf, uint8_t cr) {
-        lora->reset();
-        last_ret = lora->begin(freq, sync_word, preamble_len, bw, sf, cr);
-        return last_ret ? false : true;
-    }
+    //bool begin(float freq, uint8_t sync_word, uint16_t preamble_len, uint8_t bw, uint8_t sf, uint8_t cr) {
+    //    lora->reset();
+    //    last_ret = lora->begin(freq, sync_word, preamble_len, bw, sf, cr);
+    //    return last_ret ? false : true;
+    //}
 
 
     /** @brief Start continuous LORA recepetion
@@ -78,7 +78,7 @@ public:
     /** @brief Check if interface has any new data
      * 
      */
-    uint8_t hasData() {
-        return lora->readRegister(REG_IRQ_FLAGS) & IRQ_FLAG_RX_DONE;
+    inline uint8_t hasData() {
+        return lora->hasData();
     }
 };

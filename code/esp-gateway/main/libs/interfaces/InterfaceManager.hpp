@@ -31,8 +31,8 @@ private:
     uint8_t if_cnt = 0;
 
 public:
-    InterfaceManager(/* args */);
-    ~InterfaceManager();
+    //InterfaceManager(/* args */);
+    //~InterfaceManager();
 
     /** @brief Add interface wrapper
      * @return 0 on success, 1 if no space left
@@ -44,6 +44,10 @@ public:
         interfaces[if_cnt] = interface;
         if_cnt++;
         return 0;
+    }
+
+    inline InterfaceWrapper *getInterface(uint8_t index) {
+        return interfaces[index];
     }
 
     uint8_t getInterfaceCount() {
@@ -74,7 +78,7 @@ public:
      * @param len Length of the buffer.
      * Overwriten with the recieved data length that can fit to the buffer.
      * @return 0 on success.
-     * 256 if there are no data.
+     * 25 if there are no data.
      * Other values are interface specific.
      */
     uint8_t getNextData(uint8_t *data, uint8_t *len) {
@@ -86,7 +90,7 @@ public:
                 return interfaces[i]->getData(data, len);
         }
 
-        return 256;
+        return 255;
     }
 
 
@@ -98,25 +102,26 @@ public:
      * Other values are interface specific.
      */
     uint8_t sendData(uint8_t *data, uint8_t len) {
-        uint8_t ret = 0;
-        uint8_t len_cp = len;
         for (uint8_t i = 0; i < if_cnt; i++) {
-            ret |= interfaces[if_cnt]->sendData(data, len);
-            len = len_cp;
+            if (interfaces[i] == nullptr)
+                continue;
+
+            if (!interfaces[i]->sendData(data, len))
+                return interfaces[i]->getStatus();
         }
-        return ret;
+        return 0;
     }
 
     /** @brief Send data on interface.
      * 
-     * @param if_id Index of the interface (order by which they were added)
+     * @param index Index of the interface (order by which they were added)
      * @param data Data to be sent.
      * @param len Length of the data.
      * @return 0 on success.
      * Other values are interface specific.
      */
-    uint8_t sendData(uint8_t if_id, uint8_t *data, uint8_t len) {
-        return interfaces[if_id]->sendData(data, len);
+    uint8_t sendData(uint8_t index, uint8_t *data, uint8_t len) {
+        return interfaces[index]->sendData(data, len);
     }
 };
 

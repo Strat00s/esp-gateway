@@ -16,13 +16,13 @@ private:
     uint8_t if_type = IF_TYPE_NONE;
 
 protected:
-    uint32_t last_ret = 0;
+    uint8_t last_ret = 0;
 
 public:
     InterfaceWrapper(uint8_t interface_type) {
         this->if_type = interface_type;
     }
-    ~InterfaceWrapper() {};
+    //~InterfaceWrapper() {};
 
     inline uint8_t getType() {
         return this->if_type;
@@ -47,7 +47,7 @@ public:
      * 
      * @return Last stored return value from interface.
      */
-    virtual uint32_t getStatus() {
+    virtual uint8_t getStatus() {
         return last_ret;
     }
 

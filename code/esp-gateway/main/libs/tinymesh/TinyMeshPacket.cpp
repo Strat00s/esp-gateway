@@ -94,7 +94,7 @@ uint8_t TMPacket::getData(uint8_t *buffer, uint8_t len) {
  * @return TM_OK on succes, TM_ERR_... macros on error
  */
 uint8_t TMPacket::buildPacket(uint8_t source, uint8_t destination, uint8_t sequence, uint8_t node_type,
-                              uint8_t message_type, uint8_t repeat_cnt = 0, uint8_t *data = nullptr, uint8_t length = 0) {
+                              uint8_t message_type, uint8_t repeat_cnt, uint8_t *data, uint8_t length) {
 
     // data are null, but some are to be copied -> don't copy anything
     if (data == nullptr && length != 0)

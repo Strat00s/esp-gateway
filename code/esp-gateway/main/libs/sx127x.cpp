@@ -67,7 +67,7 @@ uint8_t SX127X::begin(float frequency, uint8_t sync_word, uint16_t preamble_len,
         pinMode(this->cs, this->output);
         pinMode(this->rst, this->output);
         pinMode(this->dio0, this->input);
-        if (this->dio1 != 0)
+        if (this->dio1 != -1)
             pinMode(this->dio1, this->input);
     }
 
@@ -543,7 +543,7 @@ uint8_t SX127X::receiveBlocking(uint8_t *data, uint8_t length) {
     //wait for successful reception or exit on timeout
     while (!digitalRead(this->dio0)) {
         //has dio1
-        if (this->dio1 != 0) {
+        if (this->dio1 != -1) {
             //timeout on dio1
             if (digitalRead(this->dio1)) {
                 status = ERR_RX_TIMEOUT;
