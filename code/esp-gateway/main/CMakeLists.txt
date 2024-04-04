@@ -1,7 +1,9 @@
 idf_component_register(
     SRCS
-        "main.cpp"
         "libs/sx127x.cpp"
-        "libs/tinyMesh.cpp"
+        "libs/tinymesh/TinyMeshPacket.cpp"
+        "libs/tinymesh/TinyMeshPacketID.cpp"
+        "libs/tinymesh/TinyMeshManager.cpp"
+        "main.cpp"
     INCLUDE_DIRS
         ".")

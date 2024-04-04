@@ -48,6 +48,7 @@ public:
      */
     bool sendData(uint8_t *data, uint8_t len) {
         last_ret = lora->transmit(data, len);
+        lora->receiveContinuous();
         return last_ret & IRQ_FLAG_TX_DONE;
     }
 
@@ -69,9 +70,9 @@ public:
         last_ret = lora->readData(buf, *len);
         *len = lora->getPayloadLength();
         lora->clearIrqFlags();
+        lora->clearIrqFlags(IRQ_FLAG_RX_DONE);
 
         lora->receiveContinuous();
-
         return 0;
     }
 
@@ -79,6 +80,6 @@ public:
      * 
      */
     inline uint8_t hasData() {
-        return lora->hasData();
+        return lora->hasData(true);
     }
 };

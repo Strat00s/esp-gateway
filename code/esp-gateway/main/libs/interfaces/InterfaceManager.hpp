@@ -97,16 +97,23 @@ public:
      * @param data Data to be sent.
      * @param len Length of the data.
      * @return 0 on success.
+     * 255 if allocation failed.
      * Other values are interface specific.
      */
     uint8_t sendData(uint8_t *data, uint8_t len) {
+        uint8_t *tmp = new uint8_t[len];
+        if (tmp == nullptr)
+            return 255;
+
         for (uint8_t i = 0; i < if_cnt; i++) {
             if (interfaces[i] == nullptr)
                 continue;
 
-            if (!interfaces[i]->sendData(data, len))
+            memcpy(tmp, data, len);
+            if (!interfaces[i]->sendData(tmp, len))
                 return interfaces[i]->getStatus();
         }
+        delete[] tmp;
         return 0;
     }
 
@@ -116,10 +123,17 @@ public:
      * @param data Data to be sent.
      * @param len Length of the data.
      * @return 0 on success.
+     * 255 if allocation failed.
      * Other values are interface specific.
      */
     uint8_t sendData(uint8_t index, uint8_t *data, uint8_t len) {
-        return interfaces[index]->sendData(data, len);
+        uint8_t *tmp = new uint8_t[len];
+        if (tmp == nullptr)
+            return 255;
+        memcpy(tmp, data, len);
+        bool ret = interfaces[index]->sendData(tmp, len);
+        delete[] tmp;
+        return ret;
     }
 };
 

@@ -1,7 +1,6 @@
 #include "TinyMeshPacket.hpp"
 #include "TinyMeshPacketID.hpp"
 #include "../interfaces/InterfaceManager.hpp"
-#include "stdio.h"
 
 
 #define TMM_QUEUE_SIZE 5
@@ -10,25 +9,30 @@
 
 #define TMM_OK                0
 
-#define TMM_QUEUE_EMPTY       1
-#define TMM_SENT              2
-#define TMM_AWAIT             3
-#define TMM_NO_DATA           4
+#define TMM_NO_DATA           1
 
-#define TMM_ERR_TIMEOUT       5
-#define TMM_ERR_SEND_DATA     6
-#define TMM_ERR_BUILD_PACKET  7
-#define TMM_ERR_QUEUE_FULL    8
-#define TMM_ERR_GET_DATA      9
-#define TMM_ERR_CHECK_HEADER  10
-#define TMM_ERR_RECEIVE       11
+#define TMM_ERR_BUILD_PACKET  2
+#define TMM_ERR_QUEUE_FULL    3
+#define TMM_ERR_GET_DATA      4
+#define TMM_ERR_CHECK_HEADER  5
 
-#define TMM_PACKET_DUPLICATE    12
-#define TMM_PACKET_RND_RESPONSE 13
-#define TMM_PACKET_FORWARD      14
-#define TMM_PACKET_REQUEST      15
-#define TMM_PACKET_FWD_REQUEST  16
-#define TMM_PACKET_RESPONSE     17
+#define TMM_PACKET_DUPLICATE    6
+#define TMM_PACKET_RND_RESPONSE 0b00000010
+#define TMM_PACKET_FORWARD      0b00000100
+#define TMM_PACKET_REQUEST      0b00001000
+#define TMM_PACKET_RESPONSE     0b00010000
+
+
+#define TMM_ERR_RECEIVE   0b00000001
+#define TMM_QUEUE_EMPTY   0b00000010
+#define TMM_ERR_TIMEOUT   0b00000011
+#define TMM_ERR_SEND_DATA 0b00000100
+#define TMM_SENT          0b00000101
+#define TMM_AWAIT         0b00000111
+#define TMM_REQUEST       0b00010000
+#define TMM_RESPONSE      0b00100000
+#define TMM_FORWARD       0b01000000
+
 
 
 class TinyMeshManager {
@@ -54,131 +58,70 @@ private:
 
     unsigned long (*millis)();
 
-
+    /** @brief Request handler to be implemented by the user.
+     * 
+     * @param request New request packet.
+     * @param fwd If the packet is to be forwarded (don't send a response).
+     * 
+     * @return 0 on success.
+     */
     uint8_t (*requestHandler)(TMPacket *request, bool fwd);
+
+    /** @brief  Response handler to be implemented by the user.
+     * 
+     * @param request Request packet to which the response packet belongs.
+     * @param response The response packet.
+     * 
+     * @return 0 on success.
+     */
     uint8_t (*responseHandler)(TMPacket *request, TMPacket *response);
 
-
-    /** @brief Check if packet is a response to the packet being currently sent.
+    /** @brief Check if a packet is a response to specific packet
      * 
-     * @param response Response packet
-     * @return 
+     * @param request Probable request packet to which we are expecting a response
+     * @param response Received packet
+     * @return True if response packet is a response to the request packet.
      */
-    bool isResponse(TMPacket *request, TMPacket *response) {
-        //response source == request destination
-        // AND
-        //response destination == response source
-        // AND
-        //response is OK OR ERR
-        return (response->getSource() == request->getDestination() &&
-                response->getDestination() == request->getSource() &&
-                (response->getMessageType() == TM_MSG_OK || response->getMessageType() == TM_MSG_ERR));
-    }
+    bool isResponse(TMPacket *request, TMPacket *response);
 
-    /** @brief Create a packet ID from packet
-     *
+
+    /** @brief Create packet ID from packet.
+     * 
+     * @param packet Packet for which to create ID.
+     * @return The packet ID.
+     */
+    TMPacketID createPacketID(TMPacket *packet);
+
+    /** @brief Set specific packet ID to mirror a packet.
+     * 
+     * @param pid Packet ID which to set.
+     * @param packet Packet which to mirror.
+     */
+    void setPacketID(TMPacketID *pid, TMPacket *packet);
+
+    /** @brief Save ID of a packet to pid_list.
+     * 
      * @param packet 
-     * @return TMPacketID
+     * @return True on success.
+     * False if packet is a duplicate. 
      */
-    TMPacketID createPacketID(TMPacket *packet) {
-        TMPacketID pid;
-        pid.setSource(packet->getSource());
-        pid.setDestination(packet->getDestination());
-        pid.setSequence(packet->getSequence());
-        pid.setMessageType(packet->getMessageType());
-        pid.setRepeatCount(packet->getRepeatCount());
-        return pid;
-    }
+    bool savePacketID(TMPacket *packet);
 
-    void setPacketID(TMPacketID *pid, TMPacket *packet) {
-        pid->setSource(packet->getSource());
-        pid->setDestination(packet->getDestination());
-        pid->setSequence(packet->getSequence());
-        pid->setMessageType(packet->getMessageType());
-        pid->setRepeatCount(packet->getRepeatCount());
-    }
 
-    /** @brief Save packet ID.
+    /** @brief Classify packet if it is a response, requiest, to be forwarded and so on.
      * 
-     * @param packet_id 
-     * @param tts 
+     * @return TMM_PACKET_ macros. 
      */
-    bool savePacketID(TMPacket *packet) {
-        for (uint8_t i = 0; i < TMM_PID_SIZE; i++) {
-            if (pid_list[i].getSource() == packet->getSource() &&
-                pid_list[i].getSequence() == packet->getSequence() &&
-                pid_list[i].getDestination() == packet->getDestination()) {
-                    if (pid_list[i].getRepeatCount() < packet->getRepeatCount()) {
-                        setPacketID(&pid_list[i], packet);
-                        return true;
-                    }
-                    //duplicate
-                    return false;
-                }
-        }
+    uint8_t classifyPacket();
 
-        setPacketID(&pid_list[pid_index], packet);
-        pid_index++;
-        if (pid_index >= TMM_PID_SIZE)
-            pid_index = 0;
-        
-        return true;
-    }
 
-    /** @brief Classify packet if it is for us or not or whetere it is a response or request or something else.
-     * 
-     * @return 
-     */
-    uint8_t classifyPacket() {
-        if (isResponse(&send_queue[curr_index], &packet))
-            return TMM_PACKET_RESPONSE;
-
-        //response
-        if (packet.getMessageType() == TM_MSG_OK && packet.getMessageType() == TM_MSG_ERR) {
-            if (packet.getDestination() == address)
-                return TMM_PACKET_RND_RESPONSE;
-
-            return TMM_PACKET_FORWARD;
-        }
-
-        //request
-        if (packet.getDestination() == address)
-            return TMM_PACKET_REQUEST;
-
-        if (packet.getDestination() == TM_BROADCAST_ADDRESS)
-            return TMM_PACKET_FWD_REQUEST;
-
-        return TMM_PACKET_FORWARD;
-    }
-
-    uint8_t handleRequest(TMPacket *request, bool fwd) {
-        if (request->getMessageType() == TM_MSG_PING){
-            printf("ping\n");
-            if (fwd) {
-                printf("To be forwarded\n");
-                return TMM_OK;
-            }
-            
-            uint8_t data = request->getData()[0];
-            return sendResponse(request->getSource(), TM_MSG_OK, &data, 1);
-        }
-
-        return requestHandler(request, fwd);
-    }
+    uint8_t handleRequest(TMPacket *request, bool fwd);
 
 
 public:
-    TinyMeshManager(InterfaceManager *interface_manager) {
-        this->if_manager = interface_manager;
-    }
-    TinyMeshManager(InterfaceManager *interface_manager, uint8_t address) : TinyMeshManager(interface_manager) {
-        this->address = address;
-    }
-    TinyMeshManager(InterfaceManager *interface_manager, uint8_t address, uint8_t node_type) : TinyMeshManager(interface_manager, address) {
-        this->node_type = node_type;
-    }
-
-    //~TinyMeshManager() {}
+    TinyMeshManager(InterfaceManager *interface_manager);
+    TinyMeshManager(InterfaceManager *interface_manager, uint8_t address);
+    TinyMeshManager(InterfaceManager *interface_manager, uint8_t address, uint8_t node_type);
 
 
     inline void registerMillis(unsigned long (*millis)()) {
@@ -194,183 +137,65 @@ public:
     }
 
 
-    /** @brief Set this node address*/
-    void setAddress(uint8_t address) {
+    /** @brief Set node address*/
+    inline void setAddress(uint8_t address) {
         this->address = address;
     }
 
-    /** @brief Set tjos mpde type*/
-    void setNodeType(uint8_t node_type) {
-        if (node_type > TM_NODE_TYPE_LP)
-            node_type = TM_NODE_TYPE_NORMAL;
-        this->node_type = node_type;
-    }
+    /** @brief Set node type*/
+    void setNodeType(uint8_t node_type);
 
-    /** @brief Get this node address*/
-    uint8_t getAddress() {
+    /** @brief Get node address*/
+    inline uint8_t getAddress() {
         return address;
     }
 
     /** @brief Get node type*/
-    uint8_t getNodeType() {
+    inline uint8_t getNodeType() {
         return node_type;
     }
 
-
-    uint8_t getStatus() {
+    /** @brief Get last internal returned value (mostly for debugging)*/
+    inline uint8_t getStatus() {
         return last_ret;
     }
 
 
-    //void setTimeout();
-
-
-    uint8_t sendResponse(uint8_t destination, uint8_t message_type, uint8_t *data = nullptr, uint8_t length = 0) {
-        printf("Sending response\n");
-        last_ret = packet.buildPacket(address, destination, sequence_num++, node_type, message_type, 0, data, length);
-        if (last_ret)
-            return TMM_ERR_BUILD_PACKET;
-
-        last_ret = if_manager->sendData(packet.raw, packet.size());
-        if (last_ret)
-            return TMM_ERR_SEND_DATA;
-
-        if (!savePacketID(&packet))
-            return TMM_PACKET_DUPLICATE;
-
-        return TMM_OK;
-    }
-
-    /** @brief Create packet and add it to queue to be sent when in loop
+    /** @brief Send response to a request packet.
      * 
-     * @param destination 
-     * @param message_type 
-     * @param repeat_cnt 
-     * @param data 
-     * @param length 
-     * @return 
+     * @param destination Destination node address.
+     * @param message_type Response type (OK, ERR).
+     * @param data Data to send.
+     * @param length Length of the data.
+     * @return TMM_OK on success.
      */
-    uint8_t queueRequest(uint8_t destination, uint8_t message_type, uint8_t *data = nullptr, uint8_t length = 0, uint16_t timeout_ms = 1000) {
-        //TODO ignore duplicats?
-        if (send_index == curr_index && queue_len)
-            return TMM_ERR_QUEUE_FULL;
+    uint8_t sendResponse(uint8_t destination, uint8_t message_type, uint8_t *data = nullptr, uint8_t length = 0);
 
-        last_ret = send_queue[send_index].buildPacket(address, destination, sequence_num++, node_type, message_type, 0, data, length);
-        if (last_ret) {
-            send_queue[send_index].clear();
-            return TMM_ERR_BUILD_PACKET;
-        }
+    /** @brief Queue request to be sent.
+     * 
+     * @param destination Destination node address.
+     * @param message_type Message type.
+     * @param data Data to send.
+     * @param length Length of the data.
+     * @return TMM_OK on success.
+     */
+    uint8_t queueRequest(uint8_t destination, uint8_t message_type, uint8_t *data = nullptr, uint8_t length = 0);
 
-        queue_len++;
-        send_index++;
-        if (send_index >= TMM_QUEUE_SIZE)
-            send_index = 0;
+    /** @brief Handle incoming packets*/
+    uint8_t receivePacket();
 
-        return TMM_OK;
-    }
-
-    uint8_t receivePacket() {
-        if (!if_manager->hasData())
-            return TMM_NO_DATA;
-
-        uint8_t len = TM_PACKET_SIZE;
-        last_ret = if_manager->getNextData(packet.raw, &len);
-        if (last_ret)
-            return TMM_ERR_GET_DATA;
-        
-        last_ret = packet.checkHeader();
-        if (last_ret)
-            return TMM_ERR_CHECK_HEADER;
-
-        return TMM_OK;
-
-        //last_ret = classifyPacket();
-        //if (!savePacketID(&packet))
-        //    return TMM_PACKET_DUPLICATE;
-        //if (last_ret & TMM_PACKET_RND_RESPONSE)
-        //    return TMM_PACKET_RND_RESPONSE;
-        ////forward packet first
-        //if (last_ret & TMM_PACKET_FORWARD) {
-        //    if (packet.getMessageType() == TM_MSG_PING)
-        //        packet.getData()[0]++;
-        //    if_manager->sendData(packet.raw, packet.size());
-        //}
-        ////handle request
-        //if (last_ret & TMM_PACKET_REQUEST) {
-        //    last_ret = handleRequest(&packet, last_ret & TMM_PACKET_FORWARD);
-        //    return TMM_PACKET_REQUEST;
-        //}
-        ////handle response
-        //if (last_ret & TMM_PACKET_RESPONSE) {
-        //    last_ret = responseHandler(&send_queue[curr_index], &packet);
-        //    return TMM_PACKET_RESPONSE;
-        //}
-        //return TMM_PACKET_FORWARD;
-    }
-
-
-    uint8_t loop() {
-        last_ret = receivePacket();
-        if (last_ret == TMM_ERR_GET_DATA || last_ret == TMM_ERR_CHECK_HEADER)
-            return TMM_ERR_RECEIVE;
-
-        //got some data
-        if (!last_ret) {
-            last_ret = classifyPacket();
-            printf("classify: %d\n", last_ret);
-
-            //not a duplicate packet
-            if (savePacketID(&packet)) {
-                printf("new id\n");
-                //handle request
-                if (last_ret == TMM_PACKET_REQUEST || last_ret == TMM_PACKET_FWD_REQUEST) {
-                    printf("request\n");
-                    last_ret = handleRequest(&packet, last_ret == TMM_PACKET_FWD_REQUEST);
-                }
-                //handle response
-                if (last_ret == TMM_PACKET_RESPONSE)
-                    last_ret = responseHandler(&send_queue[curr_index], &packet);
-
-                //forward packet first
-                if (last_ret == TMM_PACKET_FORWARD) {
-                    if (packet.getMessageType() == TM_MSG_PING)
-                        packet.getData()[0]++;
-                    if_manager->sendData(packet.raw, packet.size());
-                }
-            }
-            else
-                printf("DUPLICIT\n");
-        }
-
-        if (!queue_len)
-            return TMM_QUEUE_EMPTY;
-
-        //empty curr_index
-        if (send_queue[curr_index].empty()) {
-            curr_index++;
-            if (curr_index >= TMM_QUEUE_SIZE)
-                curr_index = 0;
-            repeat_time = 0;
-        }
-
-        //repeat
-        if (millis() - repeat_time >= 1000) {
-            //total timeout
-            if (send_queue[curr_index].getRepeatCount() == 3) {
-                queue_len--;
-                send_queue[curr_index].clear();
-                return TMM_ERR_TIMEOUT;
-            }
-
-            packet = send_queue[curr_index];
-            last_ret = if_manager->sendData(packet.raw, packet.size());
-            if (last_ret)
-                return TMM_ERR_SEND_DATA;
-
-            send_queue[curr_index].setRepeatCount(send_queue[curr_index].getRepeatCount() + 1);
-            repeat_time = millis();
-            return TMM_SENT;
-        }
-        return TMM_AWAIT;
-    }
+    /** @brief Main loop responsible for reading and handling incoming packets and sending queued packets.
+     * 
+     * @return What occured during the loop. Aditional information can be retrieved by getStatus().
+     * @param TMM_ERR_RECEIVE
+     * @param TMM_QUEUE_EMPTY
+     * @param TMM_ERR_TIMEOUT
+     * @param TMM_ERR_SEND_DATA
+     * @param TMM_SENT
+     * @param TMM_AWAIT
+     * @param TMM_REQUEST
+     * @param TMM_RESPONSE
+     * @param TMM_FORWARD
+     */
+    uint8_t loop();
 };

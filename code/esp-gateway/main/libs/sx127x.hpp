@@ -729,8 +729,8 @@ public:
         return readRegister(REG_IRQ_FLAGS);
     }
 
-    inline void clearIrqFlags() {
-        writeRegister(REG_IRQ_FLAGS, 0xFF);
+    inline void clearIrqFlags(uint8_t bits = 0xFF) {
+        writeRegister(REG_IRQ_FLAGS, bits);
     }
 
 
