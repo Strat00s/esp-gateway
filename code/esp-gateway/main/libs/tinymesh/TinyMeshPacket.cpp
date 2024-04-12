@@ -9,18 +9,8 @@
  */
 
 #include "TinyMeshPacket.hpp"
-#include <string.h>
 
 
-//private
-/** @brief Set bits in x from msb to lsb to val */
-void TMPacket::setBits(uint8_t *x, uint8_t val, uint8_t msb, uint8_t lsb) {
-    uint8_t mask = (1 << (msb - lsb + 1)) - 1;
-    mask <<= lsb;
-    *x = (*x & ~mask) | ((val << lsb) & mask);
-}
-
-//public
 void TMPacket::setRepeatCount(uint8_t repeat) {
     if (repeat > 3)
         repeat = 3;

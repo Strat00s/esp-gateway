@@ -15,8 +15,9 @@
 #define TMM_ERR_QUEUE_FULL    3
 #define TMM_ERR_GET_DATA      4
 #define TMM_ERR_CHECK_HEADER  5
+#define TMM_ERR_NULL          6
 
-#define TMM_PACKET_DUPLICATE    6
+#define TMM_PACKET_DUPLICATE    7
 #define TMM_PACKET_RND_RESPONSE 0b00000010
 #define TMM_PACKET_FORWARD      0b00000100
 #define TMM_PACKET_REQUEST      0b00001000
@@ -29,6 +30,7 @@
 #define TMM_ERR_SEND_DATA 0b00000100
 #define TMM_SENT          0b00000101
 #define TMM_AWAIT         0b00000111
+#define TMM_ERR_FORWARD   0b00001000
 #define TMM_REQUEST       0b00010000
 #define TMM_RESPONSE      0b00100000
 #define TMM_FORWARD       0b01000000
@@ -117,11 +119,16 @@ private:
 
     uint8_t handleRequest(TMPacket *request, bool fwd);
 
+    uint8_t sendData(TMPacket *packet, InterfaceWrapper *interface);
+
+    /** @brief Handle incoming packets*/
+    uint8_t receivePacket(InterfaceWrapper *interface);
+
 
 public:
-    TinyMeshManager(InterfaceManager *interface_manager);
-    TinyMeshManager(InterfaceManager *interface_manager, uint8_t address);
-    TinyMeshManager(InterfaceManager *interface_manager, uint8_t address, uint8_t node_type);
+    TinyMeshManager(InterfaceManager *interface_manager = nullptr);
+    TinyMeshManager(uint8_t address, InterfaceManager *interface_manager = nullptr);
+    TinyMeshManager(uint8_t address, uint8_t node_type, InterfaceManager *interface_manager = nullptr);
 
 
     inline void registerMillis(unsigned long (*millis)()) {
@@ -169,7 +176,7 @@ public:
      * @param length Length of the data.
      * @return TMM_OK on success.
      */
-    uint8_t sendResponse(uint8_t destination, uint8_t message_type, uint8_t *data = nullptr, uint8_t length = 0);
+    uint8_t sendResponse(uint8_t destination, uint8_t message_type, uint8_t *data = nullptr, uint8_t length = 0, InterfaceWrapper *interface = nullptr);
 
     /** @brief Queue request to be sent.
      * 
@@ -180,9 +187,6 @@ public:
      * @return TMM_OK on success.
      */
     uint8_t queueRequest(uint8_t destination, uint8_t message_type, uint8_t *data = nullptr, uint8_t length = 0);
-
-    /** @brief Handle incoming packets*/
-    uint8_t receivePacket();
 
     /** @brief Main loop responsible for reading and handling incoming packets and sending queued packets.
      * 
@@ -196,6 +200,7 @@ public:
      * @param TMM_REQUEST
      * @param TMM_RESPONSE
      * @param TMM_FORWARD
+     * @param TMM_ERR_NULL if both interface or interface manager are null
      */
-    uint8_t loop();
+    uint8_t loop(InterfaceWrapper *interface = nullptr);
 };

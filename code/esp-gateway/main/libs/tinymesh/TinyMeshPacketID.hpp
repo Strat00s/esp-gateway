@@ -1,7 +1,7 @@
 #pragma once
 #include <stdint.h>
-#include <stddef.h>
 #include <string.h>
+#include "../helpers.hpp"
 
 
 //Flag bit locations
@@ -17,15 +17,6 @@
 
 
 class TMPacketID {
-private:
-    /** @brief Set bits in x from msb to lsb to val */
-    void setBits(uint8_t *x, uint8_t val, uint8_t msb, uint8_t lsb);
-
-    /** @brief Get specific bits from x shifted to start from 1st (lsb) bit*/
-    inline uint8_t getBits(uint8_t x, uint8_t msb, uint8_t lsb) {
-        return (x >> lsb) & ((1 << (msb - lsb + 1)) - 1);
-    }
-
 public:
     uint8_t raw[4];
 

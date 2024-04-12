@@ -1,4 +1,5 @@
 #include "TinyMeshManager.hpp"
+#include <string.h>
 
 
 //private
@@ -93,16 +94,48 @@ uint8_t TinyMeshManager::handleRequest(TMPacket *request, bool fwd) {
 }
 
 
+uint8_t TinyMeshManager::sendData(TMPacket *packet, InterfaceWrapper *interface) {
+    if (interface != nullptr) {
+        uint8_t len = packet->size();
+        uint8_t *tmp = new uint8_t[len];
+        memcpy(tmp, packet->raw, len);
+        uint8_t ret = interface->sendData(tmp, len);
+        delete[] tmp;
+        return ret;
+    }
+    else
+        return if_manager->sendData(packet->raw, packet->size());
+}
+
+
+uint8_t TinyMeshManager::receivePacket(InterfaceWrapper *interface) {
+    uint8_t tmp = interface != nullptr ? interface->hasData() : if_manager->hasData();
+    if (!tmp)
+        return TMM_NO_DATA;
+
+    uint8_t len = TM_PACKET_SIZE;
+    last_ret = interface != nullptr ? interface->getData(packet.raw, &len) : if_manager->getNextData(packet.raw, &len);
+    if (last_ret)
+        return TMM_ERR_GET_DATA;
+
+    last_ret = packet.checkHeader();
+    if (last_ret)
+        return TMM_ERR_CHECK_HEADER;
+
+    return TMM_OK;
+}
+
+
 
 //public
 
 TinyMeshManager::TinyMeshManager(InterfaceManager *interface_manager) {
     this->if_manager = interface_manager;
 }
-TinyMeshManager::TinyMeshManager(InterfaceManager *interface_manager, uint8_t address) : TinyMeshManager(interface_manager) {
+TinyMeshManager::TinyMeshManager(uint8_t address, InterfaceManager *interface_manager) : TinyMeshManager(interface_manager) {
     this->address = address;
 }
-TinyMeshManager::TinyMeshManager(InterfaceManager *interface_manager, uint8_t address, uint8_t node_type) : TinyMeshManager(interface_manager, address) {
+TinyMeshManager::TinyMeshManager(uint8_t address, uint8_t node_type, InterfaceManager *interface_manager) : TinyMeshManager(address, interface_manager) {
     this->node_type = node_type;
 }
 
@@ -114,12 +147,15 @@ void TinyMeshManager::setNodeType(uint8_t node_type) {
 }
 
 
-uint8_t TinyMeshManager::sendResponse(uint8_t destination, uint8_t message_type, uint8_t *data, uint8_t length) {
+uint8_t TinyMeshManager::sendResponse(uint8_t destination, uint8_t message_type, uint8_t *data, uint8_t length, InterfaceWrapper *interface) {
+    if (if_manager == nullptr && interface == nullptr)
+        return TMM_ERR_NULL;
+    
     last_ret = packet.buildPacket(address, destination, sequence_num++, node_type, message_type, packet.getRepeatCount(), data, length);
     if (last_ret)
         return TMM_ERR_BUILD_PACKET;
 
-    last_ret = if_manager->sendData(packet.raw, packet.size());
+    last_ret = sendData(&packet, interface);
     if (last_ret)
         return TMM_ERR_SEND_DATA;
 
@@ -148,25 +184,12 @@ uint8_t TinyMeshManager::queueRequest(uint8_t destination, uint8_t message_type,
     return TMM_OK;
 }
 
-uint8_t TinyMeshManager::receivePacket() {
-    if (!if_manager->hasData())
-        return TMM_NO_DATA;
+uint8_t TinyMeshManager::loop(InterfaceWrapper *interface) {
+    if (if_manager == nullptr && interface == nullptr)
+        return TMM_ERR_NULL;
 
-    uint8_t len = TM_PACKET_SIZE;
-    last_ret = if_manager->getNextData(packet.raw, &len);
-    if (last_ret)
-        return TMM_ERR_GET_DATA;
-
-    last_ret = packet.checkHeader();
-    if (last_ret)
-        return TMM_ERR_CHECK_HEADER;
-
-    return TMM_OK;
-}
-
-uint8_t TinyMeshManager::loop() {
     uint8_t ret = TMM_OK;
-    last_ret = receivePacket();
+    last_ret = receivePacket(interface);
     if (last_ret == TMM_ERR_GET_DATA || last_ret == TMM_ERR_CHECK_HEADER)
         return ret | TMM_ERR_RECEIVE;
 
@@ -192,9 +215,10 @@ uint8_t TinyMeshManager::loop() {
                 ret |= TMM_RESPONSE;
             }
 
-            // forward packet first
+            // forward packet
             if (last_ret & TMM_PACKET_FORWARD) {
-                if_manager->sendData(packet.raw, packet.size());
+                if (sendData(&packet, interface))
+                    ret |= TMM_ERR_FORWARD;
                 ret |= TMM_FORWARD;
             }
         }
@@ -221,7 +245,8 @@ uint8_t TinyMeshManager::loop() {
             return ret | TMM_ERR_TIMEOUT;
         }
 
-        last_ret = if_manager->sendData(send_queue[curr_index].raw, send_queue[curr_index].size());
+        last_ret = sendData(&send_queue[curr_index], interface);
+        //last_ret = if_manager->sendData(send_queue[curr_index].raw, send_queue[curr_index].size());
         if (last_ret)
             return ret | TMM_ERR_SEND_DATA;
 

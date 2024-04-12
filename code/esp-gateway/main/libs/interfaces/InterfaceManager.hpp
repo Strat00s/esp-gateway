@@ -93,6 +93,7 @@ public:
 
 
     /** @brief Send data on all interfaces.
+     * It first allocates extra buffer to which to copy all data before sending them.
      * 
      * @param data Data to be sent.
      * @param len Length of the data.

@@ -1,15 +1,5 @@
 #include "TinyMeshPacketID.hpp"
 
-
-//private
-void TMPacketID::setBits(uint8_t *x, uint8_t val, uint8_t msb, uint8_t lsb){
-    uint8_t mask = (1 << (msb - lsb + 1)) - 1;
-    mask <<= lsb;
-    *x = (*x & ~mask) | ((val << lsb) & mask);
-}
-
-
-//public
 void TMPacketID::setAll(uint8_t source, uint8_t destination, uint8_t sequence, uint8_t message_type, uint8_t repeat_cnt) {
     setSource(source);
     setDestination(destination);
