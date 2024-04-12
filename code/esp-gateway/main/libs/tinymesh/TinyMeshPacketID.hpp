@@ -21,10 +21,6 @@ public:
     uint8_t raw[4];
 
 
-    //TMPacketID();
-    //~TMPacketID();
-
-
     void setAll(uint8_t source, uint8_t destination, uint8_t sequence, uint8_t message_type, uint8_t repeat_cnt);
 
     inline void setSource(uint8_t source){

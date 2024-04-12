@@ -99,7 +99,7 @@ uint8_t TinyMeshManager::sendData(TMPacket *packet, InterfaceWrapper *interface)
         uint8_t len = packet->size();
         uint8_t *tmp = new uint8_t[len];
         memcpy(tmp, packet->raw, len);
-        uint8_t ret = interface->sendData(tmp, len);
+        uint8_t ret = !interface->sendData(tmp, len);
         delete[] tmp;
         return ret;
     }
@@ -217,6 +217,9 @@ uint8_t TinyMeshManager::loop(InterfaceWrapper *interface) {
 
             // forward packet
             if (last_ret & TMM_PACKET_FORWARD) {
+                //TODO Problem with simultaneous sending -> queue it
+                //TODO -> change how packet queue is used
+                //TODO -> another big rework ahead
                 if (sendData(&packet, interface))
                     ret |= TMM_ERR_FORWARD;
                 ret |= TMM_FORWARD;

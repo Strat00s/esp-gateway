@@ -190,7 +190,7 @@ sx127xInterfaceWrapper lora434_it(&lora_434);
 sx127xInterfaceWrapper lora868_it(&lora_868);
 InterfaceManager if_manager;
 
-TinyMeshManager tmm(&if_manager, 1, TM_NODE_TYPE_NORMAL);
+TinyMeshManager tmm(1, TM_NODE_TYPE_NORMAL, &if_manager);
 
 
 /*----(STRUCTURES)----*/
@@ -907,6 +907,7 @@ void aliveTask(void *args) {
 uint8_t requestHandler(TMPacket *request, bool fwd) {
     printf("Got request:\n");
     printPacket(request);
+    printf("--------------------------------------\n");
     if (fwd)
         printf("Is to be forwarded\n");
 
@@ -924,6 +925,7 @@ uint8_t responseHandler(TMPacket *request, TMPacket *response) {
     printPacket(response);
     printf("to request:\n");
     printPacket(request);
+    printf("--------------------------------------\n");
     return 0;
 }
 
@@ -985,17 +987,13 @@ extern "C" void app_main() {
 
     /*----(MAIN LOOP)----*/
     auto timer = millis();
+    uint8_t last_ret = 0;
     while(true) {
         auto ret = tmm.loop();
-        //printf("loop: %d %d\n", ret, tmm.getStatus());
-
-        if (millis() - timer >= 5000) {
-            timer = millis();
-            uint8_t data = 0;
-            ret = tmm.queueRequest(2, TM_MSG_CUSTOM, &data, 1);
-            //printf("queue request: %d %d\n", ret, tmm.getStatus());
+        if (ret != last_ret) {
+            last_ret = ret;
+            printf("loop: %d %d\n", ret, tmm.getStatus());
         }
-
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 }

@@ -15,25 +15,25 @@
 #define TMM_ERR_QUEUE_FULL    3
 #define TMM_ERR_GET_DATA      4
 #define TMM_ERR_CHECK_HEADER  5
-#define TMM_ERR_NULL          6
+#define TMM_ERR_RECEIVE       6
+#define TMM_ERR_TIMEOUT       7
+#define TMM_ERR_SEND_DATA     8
+#define TMM_ERR_NULL          9
 
-#define TMM_PACKET_DUPLICATE    7
+#define TMM_PACKET_DUPLICATE  10
+#define TMM_QUEUE_EMPTY       11
+#define TMM_SENT              12
+#define TMM_AWAIT             13
+
+#define TMM_REQUEST       0b00010000
+#define TMM_RESPONSE      0b00100000
+#define TMM_FORWARD       0b01000000
+#define TMM_ERR_FORWARD   0b10000000
+
 #define TMM_PACKET_RND_RESPONSE 0b00000010
 #define TMM_PACKET_FORWARD      0b00000100
 #define TMM_PACKET_REQUEST      0b00001000
 #define TMM_PACKET_RESPONSE     0b00010000
-
-
-#define TMM_ERR_RECEIVE   0b00000001
-#define TMM_QUEUE_EMPTY   0b00000010
-#define TMM_ERR_TIMEOUT   0b00000011
-#define TMM_ERR_SEND_DATA 0b00000100
-#define TMM_SENT          0b00000101
-#define TMM_AWAIT         0b00000111
-#define TMM_ERR_FORWARD   0b00001000
-#define TMM_REQUEST       0b00010000
-#define TMM_RESPONSE      0b00100000
-#define TMM_FORWARD       0b01000000
 
 
 
