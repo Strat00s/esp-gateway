@@ -237,7 +237,7 @@
 //                                              0x15
 //                                              0x16
 //                                              0x17
-//                                              0x18
+#define REG_MODEM_STAT                          0x18
 //                                              0x19
 //                                              0x1A
 //                                              0x1B

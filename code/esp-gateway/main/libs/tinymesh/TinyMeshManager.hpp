@@ -25,6 +25,8 @@
 #define TMM_SENT              12
 #define TMM_AWAIT             13
 
+#define TMM_ONGOING_TX        14
+
 #define TMM_REQUEST       0b00010000
 #define TMM_RESPONSE      0b00100000
 #define TMM_FORWARD       0b01000000

@@ -77,7 +77,7 @@ public:
      * @param data Buffer where to store data.
      * @param len Length of the buffer.
      * Overwriten with the recieved data length that can fit to the buffer.
-     * @return 0 on success, 1 on failure, 2 on no data
+     * @return 0 on success. 255 on no data. Other values are interface specific for getData().
      */
     bool getNextData(uint8_t *data, uint8_t *len) {
         for (uint8_t i = 0; i < IF_COUNT; i++) {
@@ -88,7 +88,7 @@ public:
                 return interfaces[i]->getData(data, len);
         }
 
-        return 2;
+        return 255;
     }
 
 
@@ -103,19 +103,20 @@ public:
      */
     uint8_t sendData(uint8_t *data, uint8_t len) {
         uint8_t *tmp = new uint8_t[len];
-        if (tmp == nullptr)
+        if (!tmp)
             return 255;
 
+        uint8_t ret = 0;
         for (uint8_t i = 0; i < if_cnt; i++) {
             if (interfaces[i] == nullptr)
                 continue;
 
             memcpy(tmp, data, len);
-            if (!interfaces[i]->sendData(tmp, len))
-                return interfaces[i]->getStatus();
+            ret = interfaces[i]->sendData(tmp, len);
+            IF_TRUE_RET_X(ret);
         }
         delete[] tmp;
-        return 0;
+        return ret;
     }
 
     /** @brief Send data on interface.
@@ -129,10 +130,10 @@ public:
      */
     uint8_t sendData(uint8_t index, uint8_t *data, uint8_t len) {
         uint8_t *tmp = new uint8_t[len];
-        if (tmp == nullptr)
+        if (!tmp)
             return 255;
         memcpy(tmp, data, len);
-        bool ret = interfaces[index]->sendData(tmp, len);
+        uint8_t ret = interfaces[index]->sendData(tmp, len);
         delete[] tmp;
         return ret;
     }

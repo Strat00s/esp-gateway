@@ -15,9 +15,6 @@ class InterfaceWrapper {
 private:
     uint8_t if_type = IF_TYPE_NONE;
 
-protected:
-    uint8_t last_ret = 0;
-
 public:
     InterfaceWrapper(uint8_t interface_type) {
         this->if_type = interface_type;
@@ -31,47 +28,35 @@ public:
 
     /** @brief Start reception on interface (if supported)
      * 
-     * @return True on success.
+     * @return 0 on success.
      */
-    virtual bool startReception() = 0;
+    virtual uint8_t startReception() = 0;
 
     /** @brief Stop reception on interface (if supported)
      * 
-     * @return True on success.
+     * @return 0 on success.
      */
-    virtual bool stopReception() = 0;
+    virtual uint8_t stopReception() = 0;
 
-    /** @brief Get interface specific status.
-     * Should return at least the last return value of any previously run function.
-     * Preferably should return more specific status information.
-     * 
-     * @return Last stored return value from interface.
-     */
-    virtual uint8_t getStatus() {
-        return last_ret;
-    }
-
-    virtual void clearStatus() {
-        last_ret = 0;
-    }
 
 
     /** @brief Send data to interface and transmit them.
      * 
      * @param data Data to be transmitted.
      * @param len Data lenght.
-     * @return True on success, false otherwise.
+     * @param copy Create a copy of the data which will be sent instead of the data.
+     * @return 0 on success.
      */
-    virtual bool sendData(uint8_t *data, uint8_t len) = 0;
+    virtual uint8_t sendData(uint8_t *data, uint8_t len, bool copy = false) = 0;
 
     /** @brief Get data from interface.
      * 
      * @param data Buffer for storing received data.
      * @param len Length of the buffer.
      * Overwriten with the recieved data length that can fit to the buffer.
-     * @return True on success, false otherwise.
+     * @return 0 on success.
      */
-    virtual bool getData(uint8_t *data, uint8_t *len) = 0;
+    virtual uint8_t getData(uint8_t *data, uint8_t *len) = 0;
 
     /** @brief Check if interface has any new data.
      *

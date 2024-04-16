@@ -94,27 +94,17 @@ uint8_t TinyMeshManager::handleRequest(TMPacket *request, bool fwd) {
 }
 
 
-uint8_t TinyMeshManager::sendData(TMPacket *packet, InterfaceWrapper *interface) {
-    if (interface != nullptr) {
-        uint8_t len = packet->size();
-        uint8_t *tmp = new uint8_t[len];
-        memcpy(tmp, packet->raw, len);
-        uint8_t ret = !interface->sendData(tmp, len);
-        delete[] tmp;
-        return ret;
-    }
-    else
-        return if_manager->sendData(packet->raw, packet->size());
+inline uint8_t TinyMeshManager::sendData(TMPacket *packet, InterfaceWrapper *interface) {
+    return interface ? interface->sendData(packet->raw, packet->size(), true) : if_manager->sendData(packet->raw, packet->size());
 }
 
 
 uint8_t TinyMeshManager::receivePacket(InterfaceWrapper *interface) {
-    uint8_t tmp = interface != nullptr ? interface->hasData() : if_manager->hasData();
-    if (!tmp)
+    if (!(interface ? interface->hasData() : if_manager->hasData()))
         return TMM_NO_DATA;
 
     uint8_t len = TM_PACKET_SIZE;
-    last_ret = interface != nullptr ? interface->getData(packet.raw, &len) : if_manager->getNextData(packet.raw, &len);
+    last_ret = interface ? interface->getData(packet.raw, &len) : if_manager->getNextData(packet.raw, &len);
     if (last_ret)
         return TMM_ERR_GET_DATA;
 
@@ -148,7 +138,7 @@ void TinyMeshManager::setNodeType(uint8_t node_type) {
 
 
 uint8_t TinyMeshManager::sendResponse(uint8_t destination, uint8_t message_type, uint8_t *data, uint8_t length, InterfaceWrapper *interface) {
-    if (if_manager == nullptr && interface == nullptr)
+    if (!if_manager && !interface)
         return TMM_ERR_NULL;
     
     last_ret = packet.buildPacket(address, destination, sequence_num++, node_type, message_type, packet.getRepeatCount(), data, length);
@@ -185,7 +175,7 @@ uint8_t TinyMeshManager::queueRequest(uint8_t destination, uint8_t message_type,
 }
 
 uint8_t TinyMeshManager::loop(InterfaceWrapper *interface) {
-    if (if_manager == nullptr && interface == nullptr)
+    if (!if_manager && !interface)
         return TMM_ERR_NULL;
 
     uint8_t ret = TMM_OK;

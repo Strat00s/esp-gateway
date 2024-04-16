@@ -3,6 +3,9 @@
 #include "InterfaceWrapper.hpp"
 #include "libs/sx127x.hpp"
 
+//TODO remove last_ret a getstatus
+//TODO wait for reception
+//TODO copy data on transmission to buffer
 
 class sx127xInterfaceWrapper : public InterfaceWrapper{
 private:
@@ -14,29 +17,23 @@ public:
         this->lora = lora;
     }
 
-    //bool begin(float freq, uint8_t sync_word, uint16_t preamble_len, uint8_t bw, uint8_t sf, uint8_t cr) {
-    //    lora->reset();
-    //    last_ret = lora->begin(freq, sync_word, preamble_len, bw, sf, cr);
-    //    return last_ret ? false : true;
-    //}
-
 
     /** @brief Start continuous LORA recepetion
      * 
      * @return Always returns true
      */
-    bool startReception() {
+    inline uint8_t startReception() {
         lora->receiveContinuous();
-        return true;
+        return 0;
     }
 
     /** @brief Stop LORA recepetion
      * 
      * @return Always returns true
      */
-    bool stopReception() {
+    inline uint8_t stopReception() {
         lora->setMode(SX127X_OP_MODE_STANDBY);
-        return true;
+        return 0;
     }
 
 
@@ -44,12 +41,27 @@ public:
      * 
      * @param data Data to send/transmit. They will be overwritten by "junk" since the same buffer is used to save returned SPI transaction data.
      * @param len Length of data to be transmitted.
-     * @return True on success, false otherwise. IRQ flags stored as status.
+     * @return 0 on success.
+     * 254 if there is an ongoing transmission.
+     * 255 if allocation fails when copying data.
      */
-    bool sendData(uint8_t *data, uint8_t len) {
-        last_ret = lora->transmit(data, len);
+    uint8_t sendData(uint8_t *data, uint8_t len, bool copy) {
+        //TODO wait for ongoing tx
+
+        uint8_t ret = 0;
+        if (copy) {
+            uint8_t *tmp = new uint8_t[len];
+            if (!tmp)
+                return 255;
+            memcpy(tmp, data, len);
+            ret = lora->transmit(tmp, len);
+            delete[] tmp;
+        }
+        else
+            ret = lora->transmit(data, len);
+
         lora->receiveContinuous();
-        return last_ret & IRQ_FLAG_TX_DONE;
+        return ret & IRQ_FLAG_TX_DONE ? 0 : 1;
     }
 
     /** @brief Retrieve data from underlying LORA device.
@@ -59,15 +71,15 @@ public:
      * @param len Length of received data.
      * @return 0 on success
      */
-    bool getData(uint8_t *buf, uint8_t *len) {
+    uint8_t getData(uint8_t *buf, uint8_t *len) {
         lora->setMode(SX127X_OP_MODE_STANDBY);
-        last_ret = lora->checkPayloadIntegrity();
-        if (last_ret) {
+        uint8_t ret = lora->checkPayloadIntegrity();
+        if (ret) {
             lora->clearIrqFlags();
             return 1;
         }
 
-        last_ret = lora->readData(buf, *len);
+        ret = lora->readData(buf, *len);
         *len = lora->getPayloadLength();
         lora->clearIrqFlags();
         lora->clearIrqFlags(IRQ_FLAG_RX_DONE);
