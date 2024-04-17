@@ -55,15 +55,11 @@ void SX127X::registerDigitalWrite(void (*func)(uint8_t, uint8_t), uint8_t high, 
 
 
 uint8_t SX127X::begin(float frequency, uint8_t sync_word, uint16_t preamble_len, uint8_t bandwidth, uint8_t spreading_factor, uint8_t coding_rate) {
-    if (digitalRead  == nullptr ||
-        digitalWrite == nullptr ||
-        SPITransfer  == nullptr ||
-        micros       == nullptr ||
-        delay        == nullptr)
+    if (!digitalRead || !digitalWrite || !SPITransfer || !micros || !delay)
         return ERR_MISSING_CALLBACK;
 
     //toggle pin modes if it was setup
-    if (pinMode != nullptr) {
+    if (pinMode) {
         pinMode(this->cs, this->output);
         pinMode(this->rst, this->output);
         pinMode(this->dio0, this->input);
@@ -334,9 +330,9 @@ void SX127X::setLowDataRateOptimalization(bool force) {
 }
 
 uint8_t SX127X::setRxTimeout(uint16_t symbol_cnt) {
-    uint8_t status = SX127X_OK;
+    uint8_t ret = SX127X_OK;
     if (symbol_cnt < 4 || symbol_cnt > 1023) {
-        status = WARN_INVALID_TIMEOUT_SYMBOL_CNT;
+        ret = WARN_INVALID_TIMEOUT_SYMBOL_CNT;
         symbol_cnt = 100;
     }
     
@@ -345,7 +341,7 @@ uint8_t SX127X::setRxTimeout(uint16_t symbol_cnt) {
 
     this->symbol_cnt = symbol_cnt;
 
-    return status;
+    return ret;
 }
 
 
@@ -535,7 +531,7 @@ uint8_t SX127X::transmit(uint8_t *data, uint8_t length, bool soft) {
 uint8_t SX127X::receiveBlocking(uint8_t *data, uint8_t length) {
     receiveStart(length);
 
-    uint8_t status = 0;
+    uint8_t ret = 0;
     //calcualte timeout (us)
     uint32_t timeout = (symbol_cnt * float(uint16_t(1) << this->sf) / this->bw) * 1000;
     uint32_t start = micros();
@@ -546,7 +542,7 @@ uint8_t SX127X::receiveBlocking(uint8_t *data, uint8_t length) {
         if (this->dio1 != -1) {
             //timeout on dio1
             if (digitalRead(this->dio1)) {
-                status = ERR_RX_TIMEOUT;
+                ret = ERR_RX_TIMEOUT;
                 break;
             }
         }
@@ -554,19 +550,19 @@ uint8_t SX127X::receiveBlocking(uint8_t *data, uint8_t length) {
         else {
             //timeout from timer
             if (micros() - start > timeout) {
-                status = ERR_RX_TIMEOUT;
+                ret = ERR_RX_TIMEOUT;
                 break;
             }
         }
     }
 
-    status = receiveEnd();
+    ret = receiveEnd();
 
     //read data on success
-    if (!status)
+    if (!ret)
         readData(data, length);
 
-    return status;
+    return ret;
 }
 
 void SX127X::receiveStart(uint8_t length) {
@@ -597,12 +593,12 @@ uint8_t SX127X::receiveEnd() {
     //go back to standby
     setMode(SX127X_OP_MODE_STANDBY);
 
-    uint8_t status = checkPayloadIntegrity();
+    uint8_t ret = checkPayloadIntegrity();
     
     //clear IRQ flags
     writeRegister(REG_IRQ_FLAGS, 0xFF);
 
-    return status;
+    return ret;
 }
 
 void SX127X::receiveContinuous(uint8_t length) {

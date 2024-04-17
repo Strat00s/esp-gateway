@@ -231,8 +231,7 @@ uint8_t TinyMeshManager::loop(InterfaceWrapper *interface) {
     // repeat
     if (millis() - repeat_time >= 1000) {
         // total timeout
-        if (send_queue[curr_index].getRepeatCount() == 3)
-        {
+        if (send_queue[curr_index].getRepeatCount() == 3) {
             queue_len--;
             send_queue[curr_index].clear();
             return ret | TMM_ERR_TIMEOUT;
