@@ -912,7 +912,7 @@ uint8_t requestHandler(TMPacket *request, bool fwd) {
         printf("Is to be forwarded\n");
 
     uint8_t data = 1;
-    if (tmm.sendResponse(request->getSource(), TM_MSG_ERR, &data, 1))
+    if (tmm.queuePacket(request->getSource(), TM_MSG_ERR, &data, 1))
         printf("Failed to send response\n");
     else
         printf("Sent response\n");
@@ -973,11 +973,10 @@ extern "C" void app_main() {
 
     for (uint8_t i = 0; i < if_manager.getInterfaceCount(); i++) {
         printf("Starting reception on interface %d: ", if_manager.getInterface(i)->getType());
-        if (if_manager.getInterface(i)->startReception())
+        if (!if_manager.getInterface(i)->startReception())
             printf("ok\n");
         else {
-            printf("err - ");
-            printf("%d\n", if_manager.getInterface(i)->getStatus());
+            printf("err\n");
         }
     }
 
@@ -988,12 +987,21 @@ extern "C" void app_main() {
     /*----(MAIN LOOP)----*/
     auto timer = millis();
     uint8_t last_ret = 0;
+    uint8_t last_stat = 0;
     while(true) {
+        if (millis() - timer > 5000) {
+            timer = millis();
+            uint8_t data = 0;
+            uint8_t ret = tmm.queuePacket(2, TM_MSG_CUSTOM, &data, 0);
+            printf("Queue: %d\n", ret);
+        }
+
         auto ret = tmm.loop();
         if (ret != last_ret) {
             last_ret = ret;
             printf("loop: %d %d\n", ret, tmm.getStatus());
         }
+
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 }

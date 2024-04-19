@@ -18,8 +18,8 @@ void TMPacket::setRepeatCount(uint8_t repeat) {
 }
 
 void TMPacket::setNodeType(uint8_t node_type) {
-    if (node_type > 3)
-        node_type = 3;
+    if (node_type > 1)
+        node_type = 0;
     setBits(&raw[TM_FLAGS_POS], node_type, TM_NODE_TYPE_MSB, TM_NODE_TYPE_LSB);
 }
 
@@ -27,6 +27,7 @@ void TMPacket::setMessageType(uint8_t msg_type) {
     if (msg_type > 15)
         msg_type = 15;
     setBits(&raw[TM_FLAGS_POS], msg_type, TM_MSG_TYPE_MSB, TM_MSG_TYPE_LSB);
+    setBits(&raw[TM_FLAGS_POS], (msg_type == TM_MSG_OK || msg_type == TM_MSG_ERR), TM_IS_RESP_MSB, TM_IS_RESP_LSB);
 }
 
 void TMPacket::setDataLength(uint8_t length) {
@@ -104,7 +105,8 @@ uint8_t TMPacket::buildPacket(uint8_t source, uint8_t destination, uint8_t seque
     setSource(source);
     setDestination(destination);
     setSequence(sequence);
-    setFlags(repeat_cnt << 6 | message_type << 2 | node_type);
+    setFlags(repeat_cnt << 6 | node_type);
+    setMessageType(message_type);
     setDataLength(length);
 
     // check if header is valid
@@ -132,7 +134,7 @@ uint8_t TMPacket::checkHeader() {
     if (getVersion() != TM_VERSION)
         ret |= TM_ERR_VERSION;
 
-    if (getSource() == TM_BROADCAST_ADDRESS)
+    if (getSource() == TM_BROADCAST_ADDRESS || getSequence() == getDestination())
         ret |= TM_ERR_ADDRESS;
 
     // data too long

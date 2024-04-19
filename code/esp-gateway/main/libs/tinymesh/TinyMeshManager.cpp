@@ -4,15 +4,24 @@
 
 //private
 
-bool TinyMeshManager::isResponse(TMPacket *request, TMPacket *response) {
+bool TinyMeshManager::isResponse(TMPacket *response) {
     // response source == request destination
     //  AND
     // response destination == response source
     //  AND
     // response is OK OR ERR
-    return (response->getSource() == request->getDestination() &&
-            response->getDestination() == request->getSource() &&
-            (response->getMessageType() == TM_MSG_OK || response->getMessageType() == TM_MSG_ERR));
+
+    for (size_t i = 0; i < TMM_QUEUE_SIZE; i++) {
+        if (send_queue[i].packet.isResponse() || send_queue[i].packet.empty())
+            continue;
+
+        if (response->getSource() == send_queue[i].packet.getDestination() && response->getDestination() == send_queue[i].packet.getSource()) {
+            request_index = i;
+            return true;
+        }
+    }
+
+    return false;
 }
 
 
@@ -59,11 +68,14 @@ bool TinyMeshManager::savePacketID(TMPacket *packet) {
 
 
 uint8_t TinyMeshManager::classifyPacket() {
-    if (isResponse(&send_queue[curr_index], &packet))
-        return TMM_PACKET_RESPONSE;
+    //if (isResponse(&send_queue[curr_index], &packet))
+    //    return TMM_PACKET_RESPONSE;
 
     // response
-    if (packet.getMessageType() == TM_MSG_OK && packet.getMessageType() == TM_MSG_ERR) {
+    if (packet.isResponse()) {
+        if (isResponse(&packet))
+            return TMM_PACKET_RESPONSE;
+
         if (packet.getDestination() == address)
             return TMM_PACKET_RND_RESPONSE;
 
@@ -87,7 +99,7 @@ uint8_t TinyMeshManager::handleRequest(TMPacket *request, bool fwd) {
             return TMM_OK;
 
         uint8_t data = request->getData()[0];
-        return sendResponse(request->getSource(), TM_MSG_OK, &data, 1);
+        return queuePacket(request->getSource(), TM_MSG_OK, &data, 1);
     }
 
     return requestHandler(request, fwd);
@@ -137,40 +149,20 @@ void TinyMeshManager::setNodeType(uint8_t node_type) {
 }
 
 
-uint8_t TinyMeshManager::sendResponse(uint8_t destination, uint8_t message_type, uint8_t *data, uint8_t length, InterfaceWrapper *interface) {
-    if (!if_manager && !interface)
-        return TMM_ERR_NULL;
-    
-    last_ret = packet.buildPacket(address, destination, sequence_num++, node_type, message_type, packet.getRepeatCount(), data, length);
-    if (last_ret)
-        return TMM_ERR_BUILD_PACKET;
-
-    last_ret = sendData(&packet, interface);
-    if (last_ret)
-        return TMM_ERR_SEND_DATA;
-
-    if (!savePacketID(&packet))
-        return TMM_PACKET_DUPLICATE;
-
-    return TMM_OK;
-}
-
-uint8_t TinyMeshManager::queueRequest(uint8_t destination, uint8_t message_type, uint8_t *data, uint8_t length) {
-    // TODO ignore duplicats?
-    if (send_index == curr_index && queue_len)
+uint8_t TinyMeshManager::queuePacket(uint8_t destination, uint8_t message_type, uint8_t *data, uint8_t length) {
+    if (send_queue.reserve())
         return TMM_ERR_QUEUE_FULL;
+    
+    printf("New queue size: %d\n", send_queue.size());
 
-    last_ret = send_queue[send_index].buildPacket(address, destination, sequence_num++, node_type, message_type, 0, data, length);
+    auto request = send_queue.last();
+    last_ret = request->packet.buildPacket(address, destination, sequence_num++, node_type, message_type, 0, data, length);
     if (last_ret) {
-        send_queue[send_index].clear();
+        request->packet.clear();
+        send_queue.popBack();
         return TMM_ERR_BUILD_PACKET;
     }
-
-    queue_len++;
-    send_index++;
-    if (send_index >= TMM_QUEUE_SIZE)
-        send_index = 0;
-
+    request->tts = 0;
     return TMM_OK;
 }
 
@@ -199,9 +191,8 @@ uint8_t TinyMeshManager::loop(InterfaceWrapper *interface) {
             }
             // handle response
             if (last_ret & TMM_PACKET_RESPONSE) {
-                last_ret = responseHandler(&send_queue[curr_index], &packet);
-                queue_len--;
-                send_queue[curr_index].clear();
+                last_ret = responseHandler(&send_queue[request_index].packet, &packet);
+                send_queue[request_index].packet.clear();
                 ret |= TMM_RESPONSE;
             }
 
@@ -217,35 +208,68 @@ uint8_t TinyMeshManager::loop(InterfaceWrapper *interface) {
         }
     }
 
-    if (!queue_len)
-        return ret | TMM_QUEUE_EMPTY;
+    last_loop_time = millis() - last_loop_time;
+    bool is_empty = true;
+    bool skip = false;
+    for (size_t i = 0; i < send_queue.size(); i++) {
+        auto item = send_queue.at(i);
+        if (item->packet.empty())
+            continue;
 
-    // empty curr_index
-    if (send_queue[curr_index].empty()) {
-        curr_index++;
-        if (curr_index >= TMM_QUEUE_SIZE)
-            curr_index = 0;
-        repeat_time = 0;
-    }
+        is_empty = false;
 
-    // repeat
-    if (millis() - repeat_time >= 1000) {
-        // total timeout
-        if (send_queue[curr_index].getRepeatCount() == 3) {
-            queue_len--;
-            send_queue[curr_index].clear();
-            return ret | TMM_ERR_TIMEOUT;
+        if (item->tts > last_loop_time) {
+            item->tts -= last_loop_time;
+            continue;
         }
 
-        last_ret = sendData(&send_queue[curr_index], interface);
-        //last_ret = if_manager->sendData(send_queue[curr_index].raw, send_queue[curr_index].size());
-        if (last_ret)
-            return ret | TMM_ERR_SEND_DATA;
+        if (skip)
+            continue;
 
-        send_queue[curr_index].setRepeatCount(send_queue[curr_index].getRepeatCount() + 1);
-        repeat_time = millis();
-        return ret | TMM_SENT;
+        //timeout for this packet
+        if (item->packet.getRepeatCount() == 3) {
+            printf("Clearing stale packet\n");
+            item->packet.clear();
+            ret |= TMM_ERR_TIMEOUT;
+            continue;
+        }
+
+        //send it
+        last_ret = sendData(&item->packet, interface);
+        if (last_ret) {
+            skip = true;
+            continue;
+        }
+
+        //if it was a response, remove it
+        if (item->packet.isResponse()) {
+            printf("Clearing response\n");
+            item->packet.clear();
+            continue;
+        }
+
+        printf("rpt: %d\n", item->packet.getRepeatCount());
+        item->packet.setRepeatCount(item->packet.getRepeatCount() + 1);
+        item->tts = 1000;
     }
+    last_loop_time = millis();
+
+    int i = 0;
+    while (send_queue.first()->packet.empty() && !send_queue.empty()) {
+        send_queue.popFront();
+        i++;
+    }
+    if (i)
+        printf("Removed %d packet(s)\n", i);
+    
+    if (skip)
+        return (ret & 0xF0) | TMM_ERR_SEND_DATA;
+
+    if (is_empty)
+        return ret | TMM_QUEUE_EMPTY;
+    
+    if ((ret & 0x0F) != TMM_ERR_TIMEOUT)
+        return ret | TMM_SENT;
 
     return ret | TMM_AWAIT;
 }

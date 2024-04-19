@@ -1,6 +1,7 @@
 #include "TinyMeshPacket.hpp"
 #include "TinyMeshPacketID.hpp"
 #include "../interfaces/InterfaceManager.hpp"
+#include "../containers/StaticDeque.hpp"
 
 
 #define TMM_QUEUE_SIZE 5
@@ -38,6 +39,11 @@
 #define TMM_PACKET_RESPONSE     0b00010000
 
 
+typedef struct {
+    TMPacket packet;
+    unsigned long tts;
+} packet_tts_t;
+
 
 class TinyMeshManager {
 private:
@@ -48,14 +54,12 @@ private:
     uint8_t sequence_num = 0;
 
     TMPacket packet;
-    TMPacket send_queue[TMM_QUEUE_SIZE];
-    uint8_t send_index = 0;
-    uint8_t curr_index = 0;
-    uint8_t queue_len  = 0;
-    unsigned long repeat_time = 0;
+    StaticDeque<packet_tts_t, TMM_QUEUE_SIZE> send_queue;
+    size_t request_index = 0;
+    unsigned long last_loop_time = 0;
 
     TMPacketID pid_list[TMM_PID_SIZE];
-    uint8_t pid_index = 0;
+    size_t pid_index = 0;
 
     uint8_t last_ret;
 
@@ -80,13 +84,12 @@ private:
      */
     uint8_t (*responseHandler)(TMPacket *request, TMPacket *response);
 
-    /** @brief Check if a packet is a response to specific packet
+    /** @brief Check if a packet is a response to any queued packet
      * 
-     * @param request Probable request packet to which we are expecting a response
      * @param response Received packet
      * @return True if response packet is a response to the request packet.
      */
-    bool isResponse(TMPacket *request, TMPacket *response);
+    bool isResponse(TMPacket *response);
 
 
     /** @brief Create packet ID from packet.
@@ -170,16 +173,6 @@ public:
     }
 
 
-    /** @brief Send response to a request packet.
-     * 
-     * @param destination Destination node address.
-     * @param message_type Response type (OK, ERR).
-     * @param data Data to send.
-     * @param length Length of the data.
-     * @return TMM_OK on success.
-     */
-    uint8_t sendResponse(uint8_t destination, uint8_t message_type, uint8_t *data = nullptr, uint8_t length = 0, InterfaceWrapper *interface = nullptr);
-
     /** @brief Queue request to be sent.
      * 
      * @param destination Destination node address.
@@ -188,7 +181,7 @@ public:
      * @param length Length of the data.
      * @return TMM_OK on success.
      */
-    uint8_t queueRequest(uint8_t destination, uint8_t message_type, uint8_t *data = nullptr, uint8_t length = 0);
+    uint8_t queuePacket(uint8_t destination, uint8_t message_type, uint8_t *data = nullptr, uint8_t length = 0);
 
     /** @brief Main loop responsible for reading and handling incoming packets and sending queued packets.
      * 

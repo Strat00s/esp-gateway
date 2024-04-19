@@ -17,8 +17,6 @@
 /*# Packet structure
 -------------HEADER-------------
     VERSION     8b
-        7-4: RESERVED
-        3-0: VERSION
     SOURCE      8b
     DESTINATION 8b
     FLAGS       8b
@@ -26,118 +24,19 @@
         5-2: MESSAGE TYPE
             0000 = OK
             0001 = ERR
-            0010 = TM_REGISTER - request address from gateway in the network (if there is any)
-            0011 = PING - check if node is in the network. Contains hop counter
-            0100 = STATUS
-            0101 = TM_MSG_COMBINED
-            0110 = TM_MSG_REQUEST - request a specific message from node
-            0111 ... 1110 = RESERVED
-            1111 = CUSTOM
-        1-0: DEVICE TYPE
-            00 = GATEWAY
-            01 = NODE
-            10 = LP_NODE
-            11 = OTHER
+            0010 = PING - check if node is in the network. Contains hop counter
+            0011 - 1111 = CUSTOM - user defined
+        1:  IS RESPONSE
+            0 = FALSE - request
+            1 = TRUE - response
+        0: DEVICE TYPE
+            0 = NODE
+            1 = LP_NODE
     DATA LENGTH 8b
 --------------DATA--------------
     DATA...     256b - len(header)
 
 
-
-excahnges???:
-request -> response
-request -> combined response -> response
-
-
-.join function (needs access to interface manager!!!)
-send TM_ADRR_REQUEST
-wait for response
-    use the newly given address
-otherwise, set address to 1 and ping
-    if response, increase address and repeat
-if no response, use that address
-
-
-# Predefined messages packet structure and flow:
-    OK
-        VERSION
-        SOURCE
-        DESTINATION
-        FLAGS
-            7-6: REPEAT CNT
-            5-2: MESSAGE TYPE: TM_MSG_OK
-            1-0: DEVICE TYPE
-        DATA LENGTH: l
-        DATA: l bytes (depends on answered message)
-    ERROR
-        VERSION
-        SOURCE
-        DESTINATION
-        FLAGS
-            7-6: REPEAT CNT
-            5-2: MESSAGE TYPE: TM_MSG_ERR
-            1-0: DEVICE TYPE
-        DATA LENGTH: 1
-        DATA: ERROR_CODE
-    PING
-        VERSION
-        SOURCE
-        DESTINATION
-        FLAGS
-            7-6: REPEAT CNT
-            5-2: MESSAGE TYPE: TM_MSG_PING
-            1-0: DEVICE TYPE
-        DATA LENGTH: 1
-        DATA: hop counter increased whenever ping is to be forwarded
-    ADDRESS REQUEST
-        VERSION
-        SOURCE: 0
-        DESTINATION: 255
-        FLAGS
-            7-6: REPEAT CNT
-            5-2: MESSAGE TYPE: TM_MSG_REGISTER
-            1-0: DEVICE TYPE
-        DATA LENGTH: 0
-    STATUS
-        VERSION
-        SOURCE
-        DESTINATION
-        FLAGS
-            7-6: REPEAT CNT
-            5-2: MESSAGE TYPE: TM_MSG_STATUS
-            1-0: DEVICE TYPE
-        DATA LENGTH: 1 OR l > 0
-        DATA: custom status code OR string of size l
-    COMBINED
-        VERSION
-        SOURCE
-        DESTINATION
-        FLAGS
-            7-6: REPEAT CNT
-            5-2: MESSAGE TYPE: TM_MSG_COMBINED
-            1-0: DEVICE TYPE
-        DATA LENGTH: (1 + 1 + l) * N
-        DATA: MESSAGE TYPE | MESSAGE LEN | DATA | ... N times
-    REQUEST
-        VERSION
-        SOURCE
-        DESTINATION
-        FLAGS
-            7-6: REPEAT CNT
-            5-2: MESSAGE TYPE: TM_MSG_STATUS
-            1-0: DEVICE TYPE
-        DATA LENGTH: 1 OR l > 1
-        DATA: MESSAGE_TYPE OR MESSAGE_TYPE + extra data
-    CUSTOM
-        VERSION
-        SOURCE
-        DESTINATION
-        FLAGS
-            7-6: REPEAT CNT
-            5-2: MESSAGE TYPE: TM_MSG_COMBINED
-            1-0: DEVICE TYPE
-        DATA LENGTH: l
-        DATA: l bytes
 */
 
 
@@ -149,6 +48,8 @@ if no response, use that address
 //Flag bit locations
 #define TM_NODE_TYPE_LSB 0
 #define TM_NODE_TYPE_MSB 0
+#define TM_IS_RESP_LSB   1
+#define TM_IS_RESP_MSB   1
 #define TM_MSG_TYPE_LSB  2
 #define TM_MSG_TYPE_MSB  5
 #define TM_RPT_CNT_LSB   6
@@ -178,15 +79,6 @@ if no response, use that address
 #define TM_ERR_MSG_TYPE     0b01000000
 #define TM_ERR_MSG_DATA_LEN 0b10000000
 
-
-//Check packet returns
-//#define TM_PACKET_DUPLICATE    0b00000001
-//#define TM_PACKET_RESPONSE     0b00000010
-//#define TM_PACKET_RND_RESPONSE 0b00000100
-//#define TM_PACKET_REQUEST      0b00001000
-//#define TM_PACKET_FORWARD      0b00010000
-//#define TM_PACKET_REPEAT       0b00100000
-//#define TM_PACKET_INV_RESPONSE 0b01000000
 
 /*----(MESSAGE TYPES)----*/
 #define TM_MSG_OK     0b0000 //response
@@ -246,7 +138,13 @@ public:
 
     void setNodeType(uint8_t node_type);
 
+    ///** @brief Set the message type.
+    // * Also sets if a message is a response, if type is OK or ERR.*/
     void setMessageType(uint8_t msg_type);
+
+    //inline void setIsResponse(bool is_response) {
+    //    setBits(&raw[TM_FLAGS_POS], is_response, TM_IS_RESP_MSB, TM_IS_RESP_LSB);
+    //}
 
     /** @brief Set entire flag field at once
      *
@@ -293,6 +191,10 @@ public:
 
     inline uint8_t getMessageType() {
         return getBits(raw[TM_FLAGS_POS], TM_MSG_TYPE_MSB, TM_MSG_TYPE_LSB);
+    }
+
+    inline bool isResponse() {
+        return getBits(raw[TM_FLAGS_POS], TM_IS_RESP_MSB, TM_IS_RESP_LSB);
     }
 
     inline uint8_t getFlags() {
