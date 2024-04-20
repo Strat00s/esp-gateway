@@ -26,7 +26,7 @@
 #define TMM_SENT              12
 #define TMM_AWAIT             13
 
-#define TMM_ONGOING_TX        14
+#define TMM_MEDIUM_BUSY       14
 
 #define TMM_REQUEST       0b00010000
 #define TMM_RESPONSE      0b00100000
@@ -124,10 +124,12 @@ private:
 
     uint8_t handleRequest(TMPacket *request, bool fwd);
 
-    uint8_t sendData(TMPacket *packet, InterfaceWrapper *interface);
+    bool isMediumFree(InterfaceWrapper *interface = nullptr);
+
+    uint8_t sendData(TMPacket *packet, InterfaceWrapper *interface = nullptr);
 
     /** @brief Handle incoming packets*/
-    uint8_t receivePacket(InterfaceWrapper *interface);
+    uint8_t receivePacket(InterfaceWrapper *interface = nullptr);
 
 
 public:

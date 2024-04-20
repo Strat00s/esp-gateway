@@ -56,7 +56,7 @@ void SX127X::registerDigitalWrite(void (*func)(uint8_t, uint8_t), uint8_t high, 
 
 uint8_t SX127X::begin(float frequency, uint8_t sync_word, uint16_t preamble_len, uint8_t bandwidth, uint8_t spreading_factor, uint8_t coding_rate) {
     if (!digitalRead || !digitalWrite || !SPITransfer || !micros || !delay)
-        return ERR_MISSING_CALLBACK;
+        return SX127X_ERR_MISSING_CALLBACK;
 
     //toggle pin modes if it was setup
     if (pinMode) {
@@ -81,7 +81,7 @@ uint8_t SX127X::begin(float frequency, uint8_t sync_word, uint16_t preamble_len,
         case SX1276_CHIP_VERSION:
         case RFM95_CHIP_VERSION: break;
         //case RFM69_CHIP_VERSION: break;
-        default: return ERR_INVALID_CHIP_VERSION;
+        default: return SX127X_ERR_INVALID_CHIP_VERSION;
     }
 
     //go to standby to change and set default settings
@@ -160,7 +160,7 @@ void SX127X::setModemMode(uint8_t modem) {
 
 uint8_t SX127X::setPreambleLength(uint16_t preamble_len) {
     if (preamble_len < 6)
-        return ERR_INVALID_PREAMBLE_LEN;
+        return SX127X_ERR_INVALID_PREAMBLE_LEN;
     writeRegister(REG_PREAMBLE_MSB, (uint8_t)((preamble_len >> 8) & 0xFF));
     writeRegister(REG_PREAMBLE_LSB, (uint8_t)(preamble_len & 0xFF));
     return SX127X_OK;
@@ -168,12 +168,12 @@ uint8_t SX127X::setPreambleLength(uint16_t preamble_len) {
 
 uint8_t SX127X::setFrequency(float frequency) {
     if (this->chip_version == SX1272_CHIP_VERSION && (frequency < 860 || frequency > 1020))
-        return ERR_INNVALID_FREQUENCY;
+        return SX127X_ERR_INNVALID_FREQUENCY;
     if (this->chip_version == SX1276_CHIP_VERSION && (frequency < 137 || frequency > 1020))
-        return ERR_INNVALID_FREQUENCY;
+        return SX127X_ERR_INNVALID_FREQUENCY;
     //if (this->chip_version == RFM69_CHIP_VERSION)
     if (this->chip_version == RFM95_CHIP_VERSION && (frequency < 433 || frequency > 915))
-        return ERR_INNVALID_FREQUENCY;
+        return SX127X_ERR_INNVALID_FREQUENCY;
 
     //go to standby first
     setMode(SX127X_OP_MODE_STANDBY);
@@ -189,7 +189,7 @@ uint8_t SX127X::setFrequency(float frequency) {
 
 uint8_t SX127X::setBandwidth(uint8_t bandwidth) {
     if (getModemMode() != SX127X_MODEM_MODE_LORA)
-        return ERR_INVALID_MODEM_MODE;
+        return SX127X_ERR_INVALID_MODEM_MODE;
 
     switch (bandwidth) {
         case LORA_BANDWIDTH_7_8kHz:   this->bw =   7.8;  break;
@@ -202,7 +202,7 @@ uint8_t SX127X::setBandwidth(uint8_t bandwidth) {
         case LORA_BANDWIDTH_125kHz:   this->bw = 125.0;  break;
         case LORA_BANDWIDTH_250kHz:   this->bw = 250.0;  break;
         case LORA_BANDWIDTH_500kHz:   this->bw = 500.0;  break;
-        default: return ERR_INVALID_BANDWIDTH;
+        default: return SX127X_ERR_INVALID_BANDWIDTH;
     }
 
     setRegister(REG_MODEM_CONFIG_1, bandwidth, 4, 7);
@@ -214,7 +214,7 @@ uint8_t SX127X::setBandwidth(uint8_t bandwidth) {
 
 uint8_t SX127X::setSpreadingFactor(uint8_t spreading_factor) {
     if (getModemMode() != SX127X_MODEM_MODE_LORA)
-        return ERR_INVALID_MODEM_MODE;
+        return SX127X_ERR_INVALID_MODEM_MODE;
 
     switch (spreading_factor) {
         case LORA_SPREADING_FACTOR_6:
@@ -224,7 +224,7 @@ uint8_t SX127X::setSpreadingFactor(uint8_t spreading_factor) {
         case LORA_SPREADING_FACTOR_10:
         case LORA_SPREADING_FACTOR_11:
         case LORA_SPREADING_FACTOR_12: break;
-        default: return ERR_INVALID_SPREADING_FACTOR;
+        default: return SX127X_ERR_INVALID_SPREADING_FACTOR;
     }
 
     setRegister(REG_MODEM_CONFIG_2, spreading_factor, 4, 7);
@@ -252,7 +252,7 @@ uint8_t SX127X::setSpreadingFactor(uint8_t spreading_factor) {
 
 uint8_t SX127X::setImplicitHeader() {
     if (getModemMode() != SX127X_MODEM_MODE_LORA)
-        return ERR_INVALID_MODEM_MODE;
+        return SX127X_ERR_INVALID_MODEM_MODE;
 
     setRegister(REG_MODEM_CONFIG_1, LORA_IMPLICIT_HEADER, 0, 0);
 
@@ -261,7 +261,7 @@ uint8_t SX127X::setImplicitHeader() {
 
 uint8_t SX127X::setExplicitHeader() {
     if (getModemMode() != SX127X_MODEM_MODE_LORA)
-        return ERR_INVALID_MODEM_MODE;
+        return SX127X_ERR_INVALID_MODEM_MODE;
 
     setRegister(REG_MODEM_CONFIG_1, LORA_EXPLICIT_HEADER, 0, 0);
 
@@ -270,14 +270,14 @@ uint8_t SX127X::setExplicitHeader() {
 
 uint8_t SX127X::setCodingRate(uint8_t coding_rate) {
     if (getModemMode() != SX127X_MODEM_MODE_LORA)
-        return ERR_INVALID_MODEM_MODE;
+        return SX127X_ERR_INVALID_MODEM_MODE;
 
     switch(coding_rate) {
         case LORA_CODING_RATE_4_5:
         case LORA_CODING_RATE_4_6:
         case LORA_CODING_RATE_4_7:
         case LORA_CODING_RATE_4_8: break;
-        default: return ERR_INVALID_CODING_RATE;
+        default: return SX127X_ERR_INVALID_CODING_RATE;
     }
 
     //this->cr = (coding_rate + 0b00001000) >> 1;
@@ -288,12 +288,12 @@ uint8_t SX127X::setCodingRate(uint8_t coding_rate) {
 
 uint8_t SX127X::setGain(uint8_t gain) {
     if ((gain >> 5) > 6)
-        return ERR_INVALID_GAIN;
+        return SX127X_ERR_INVALID_GAIN;
 
     setMode(SX127X_OP_MODE_STANDBY);
 
     if (getModemMode() != SX127X_MODEM_MODE_LORA)
-        return ERR_INVALID_MODEM_MODE;
+        return SX127X_ERR_INVALID_MODEM_MODE;
 
     //set automatic gain control
     if (gain == 0)
@@ -308,7 +308,7 @@ uint8_t SX127X::setGain(uint8_t gain) {
 
 uint8_t SX127X::setCRC(bool enable) {
     if (getModemMode() != SX127X_MODEM_MODE_LORA)
-        return ERR_INVALID_MODEM_MODE;
+        return SX127X_ERR_INVALID_MODEM_MODE;
     
     if(enable)
         setRegister(REG_MODEM_CONFIG_2, LORA_RX_PAYLOAD_CRC_ON, 2, 2);
@@ -347,7 +347,7 @@ uint8_t SX127X::setRxTimeout(uint16_t symbol_cnt) {
 
 uint8_t SX127X::setCurrentLimit(uint8_t max_current) {
     if ((max_current < 45 || max_current > 240) && max_current != 0)
-        return ERR_INVALID_CURRENT_LIMIT;
+        return SX127X_ERR_INVALID_CURRENT_LIMIT;
 
     setMode(SX127X_OP_MODE_STANDBY);
 
@@ -364,9 +364,9 @@ uint8_t SX127X::setCurrentLimit(uint8_t max_current) {
 
 uint8_t SX127X::setPower(int8_t power, bool pa_boost) {
     if (pa_boost && power != 20 && (power < 2 || power > 17))
-        return ERR_INVALID_POWER;
+        return SX127X_ERR_INVALID_POWER;
     if (!pa_boost && (power < -4 || power > 15))
-        return ERR_INVALID_POWER;
+        return SX127X_ERR_INVALID_POWER;
 
     uint8_t pa_config = 0;
     setMode(SX127X_OP_MODE_STANDBY);
@@ -542,7 +542,7 @@ uint8_t SX127X::receiveBlocking(uint8_t *data, uint8_t length) {
         if (this->dio1 != -1) {
             //timeout on dio1
             if (digitalRead(this->dio1)) {
-                ret = ERR_RX_TIMEOUT;
+                ret = SX127X_ERR_RX_TIMEOUT;
                 break;
             }
         }
@@ -550,7 +550,7 @@ uint8_t SX127X::receiveBlocking(uint8_t *data, uint8_t length) {
         else {
             //timeout from timer
             if (micros() - start > timeout) {
-                ret = ERR_RX_TIMEOUT;
+                ret = SX127X_ERR_RX_TIMEOUT;
                 break;
             }
         }
@@ -631,9 +631,9 @@ uint8_t SX127X::checkPayloadIntegrity() {
 
     //check valid header and CRC
     if (!(irq_flags & IRQ_FLAG_VALID_HEADER))
-        return ERR_INVALID_HEADER;
+        return SX127X_ERR_INVALID_HEADER;
     if (getIrqFlags() & IRQ_FLAG_PAYLOAD_CRC_ERROR)
-        return ERR_CRC_MISMATCH;
+        return SX127X_ERR_CRC_MISMATCH;
     return SX127X_OK;
 }
 
@@ -647,7 +647,7 @@ uint8_t SX127X::getPayloadLength() {
 
 uint8_t SX127X::readData(uint8_t *data, uint8_t length) {
     if (data == nullptr)
-        return ERR_NULL;
+        return SX127X_ERR_NULL;
     
     uint8_t payload_length = getPayloadLength();
 
@@ -655,7 +655,7 @@ uint8_t SX127X::readData(uint8_t *data, uint8_t length) {
         length = payload_length;
 
     readRegistersBurst(REG_FIFO, data, length);
-    return length < payload_length ? ERR_TRUNCATED : SX127X_OK;
+    return length < payload_length ? SX127X_ERR_TRUNCATED : SX127X_OK;
 }
 
 

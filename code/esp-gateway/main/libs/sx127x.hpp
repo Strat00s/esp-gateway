@@ -298,22 +298,22 @@
 #define SX127X_OK                       0
 
 //Errors
-#define ERR_INVALID_PREAMBLE_LEN        1
-#define ERR_INVALID_BANDWIDTH           2
-#define ERR_INVALID_MODEM_MODE          3
-#define ERR_INVALID_SPREADING_FACTOR    4
-#define ERR_INVALID_CODING_RATE         5
-#define ERR_INVALID_CURRENT_LIMIT       6
-#define ERR_INVALID_GAIN                7
-#define ERR_INVALID_POWER               8
-#define ERR_MISSING_CALLBACK            9
-#define ERR_INVALID_CHIP_VERSION        10 //wrong chip version was read. Check you connection.
-#define ERR_RX_TIMEOUT                  11
-#define ERR_CRC_MISMATCH                12
-#define ERR_INVALID_HEADER              13
-#define ERR_INNVALID_FREQUENCY          14
-#define ERR_NULL                        15
-#define ERR_TRUNCATED                   16
+#define SX127X_ERR_INVALID_PREAMBLE_LEN        1
+#define SX127X_ERR_INVALID_BANDWIDTH           2
+#define SX127X_ERR_INVALID_MODEM_MODE          3
+#define SX127X_ERR_INVALID_SPREADING_FACTOR    4
+#define SX127X_ERR_INVALID_CODING_RATE         5
+#define SX127X_ERR_INVALID_CURRENT_LIMIT       6
+#define SX127X_ERR_INVALID_GAIN                7
+#define SX127X_ERR_INVALID_POWER               8
+#define SX127X_ERR_MISSING_CALLBACK            9
+#define SX127X_ERR_INVALID_CHIP_VERSION        10 //wrong chip version was read. Check you connection.
+#define SX127X_ERR_RX_TIMEOUT                  11
+#define SX127X_ERR_CRC_MISMATCH                12
+#define SX127X_ERR_INVALID_HEADER              13
+#define SX127X_ERR_INNVALID_FREQUENCY          14
+#define SX127X_ERR_NULL                        15
+#define SX127X_ERR_TRUNCATED                   16
 
 //Warnings
 #define WARN_INVALID_TIMEOUT_SYMBOL_CNT 1
@@ -482,7 +482,7 @@ public:
      * with the incoming data
      * 
      * @param preamble_length preamble length between 6 and 65535
-     * @return 0 on success. ERR_INVALID_PREAMBLE_LEN if preamble length
+     * @return 0 on success. SX127X_ERR_INVALID_PREAMBLE_LEN if preamble length
      * is less than 6.
      */
     uint8_t setPreambleLength(uint16_t preamble_length);
@@ -491,7 +491,7 @@ public:
     /** @brief Set the module radio frequency
      * 
      * @param frequency Frequency in MHz
-     * @return 0 on success, ERR_INVALID_FREQUENCY if invalid frequency
+     * @return 0 on success, SX127X_ERR_INVALID_FREQUENCY if invalid frequency
      * is provided for current module version
      */
     uint8_t setFrequency(float frequency);
@@ -510,8 +510,8 @@ public:
      * @param LORA_BANDWIDTH_125kHz
      * @param LORA_BANDWIDTH_250kHz
      * @param LORA_BANDWIDTH_500kHz
-     * @return 0 on success. ERR_INVALID_MODEM_MODE if not in LoRa mode.
-     * ERR_INVALID_BANDWIDTH if invalid bandwidth is provided.
+     * @return 0 on success. SX127X_ERR_INVALID_MODEM_MODE if not in LoRa mode.
+     * SX127X_ERR_INVALID_BANDWIDTH if invalid bandwidth is provided.
      */
     uint8_t setBandwidth(uint8_t bandwidth);
 
@@ -526,21 +526,21 @@ public:
      * @param LORA_SPREADING_FACTOR_10
      * @param LORA_SPREADING_FACTOR_11
      * @param LORA_SPREADING_FACTOR_12
-     * @return 0 on success. ERR_INVALID_MODEM_MODE if not in LoRa mode.
-     * ERR_INVALID_SPREADING_FACTOR if invalid spreading factor is provided.
+     * @return 0 on success. SX127X_ERR_INVALID_MODEM_MODE if not in LoRa mode.
+     * SX127X_ERR_INVALID_SPREADING_FACTOR if invalid spreading factor is provided.
      */
     uint8_t setSpreadingFactor(uint8_t spreading_factor);
 
     /** @brief Set the implicit header.
      *  Is called automatically when spreading factor is 6.
      * 
-     * @return 0 on success. ERR_INVALID_MODEM_MODE if not in LoRa mode.
+     * @return 0 on success. SX127X_ERR_INVALID_MODEM_MODE if not in LoRa mode.
      */
     uint8_t setImplicitHeader();
 
     /** @brief Set explicit header.
      * 
-     * @return 0 on success. ERR_INVALID_MODEM_MODE if not in LoRa mode.
+     * @return 0 on success. SX127X_ERR_INVALID_MODEM_MODE if not in LoRa mode.
      */
     uint8_t setExplicitHeader();
 
@@ -560,8 +560,8 @@ public:
      * @param LORA_CODING_RATE_4_6
      * @param LORA_CODING_RATE_4_7
      * @param LORA_CODING_RATE_4_8
-     * @return 0 on success. ERR_INVALID_MODEM_MODE if not in LoRa mode.
-     * ERR_INVALID_CODING_RATE if invalid coding rate is provided.
+     * @return 0 on success. SX127X_ERR_INVALID_MODEM_MODE if not in LoRa mode.
+     * SX127X_ERR_INVALID_CODING_RATE if invalid coding rate is provided.
      */
     uint8_t setCodingRate(uint8_t coding_rate);
 
@@ -576,14 +576,14 @@ public:
      * @param SX127X_LNA_GAIN_G4
      * @param SX127X_LNA_GAIN_G5
      * @param SX127X_LNA_GAIN_G6
-     * @return 0 on success. ERR_INVALID_MODEM_MODE if not in LoRa mode.
+     * @return 0 on success. SX127X_ERR_INVALID_MODEM_MODE if not in LoRa mode.
      */
     uint8_t setGain(uint8_t gain);
 
     /** @brief Enable or disable CRC 
      * 
      * @param enable 
-     * @return 0 on success. ERR_INVALID_MODEM_MODE if not in LoRa mode.
+     * @return 0 on success. SX127X_ERR_INVALID_MODEM_MODE if not in LoRa mode.
      */
     uint8_t setCRC(bool enable);
 
@@ -620,7 +620,7 @@ public:
      * 
      * @param max_current maximum current drain of the power amplifier
      * (if the module has one).
-     * @return ERR_INVALID_CURRENT_LIMIT if invalid current value is provided
+     * @return SX127X_ERR_INVALID_CURRENT_LIMIT if invalid current value is provided
      */
     uint8_t setCurrentLimit(uint8_t max_current);
 
@@ -629,7 +629,7 @@ public:
      * 
      * @param power Desired power from -4dBm to 15dBm when using RFO. From 2dBm to 17dBm or 20dBm when using PA_BOOST.
      * @param pa_boost Wheter to use PA_BOOST pin or RFO pin.
-     * @return 0 on success. ERR_INVALID_POWER when invalid power for specified pin is provided.
+     * @return 0 on success. SX127X_ERR_INVALID_POWER when invalid power for specified pin is provided.
      */
     uint8_t setPower(int8_t power, bool pa_boost = true);
 
@@ -653,7 +653,7 @@ public:
      * as long as the received data length)
      * @param length Length of data to be received. Only used when using
      * lowest possible spreading factor LORA_SPREADING_FACTOR_6
-     * @return 0 on succesfull reception. ERR_RX_TIMEOUT when 
+     * @return 0 on succesfull reception. SX127X_ERR_RX_TIMEOUT when 
      * reception timeout occures.
      */
     uint8_t receiveBlocking(uint8_t* data, uint8_t length = 0);
@@ -672,7 +672,7 @@ public:
 
     /** @brief Cleanup helper function for "non-blocking" receive
      * 
-     * @return 0 on success. ERR_CRC_MISMATCH when CRC check fails.
+     * @return 0 on success. SX127X_ERR_CRC_MISMATCH when CRC check fails.
      */
     uint8_t receiveEnd();
 
@@ -690,8 +690,8 @@ public:
 
     /** @brief Check that received payload has valid CRC and header
      * 
-     * @return 0 on success. ERR_CRC_MISMATCH when CRC check fails,
-     * ERR_INVALID_HEADER when header check fails.
+     * @return 0 on success. SX127X_ERR_CRC_MISMATCH when CRC check fails,
+     * SX127X_ERR_INVALID_HEADER when header check fails.
      */
     uint8_t checkPayloadIntegrity();
 
@@ -701,15 +701,6 @@ public:
      */
     uint8_t getPayloadLength();
 
-    /** @brief Check if any new data were received, by either reading the 
-     * 
-     * @param soft 
-     * @return true 
-     * @return false 
-     */
-    inline bool hasData(bool soft = false) {
-        return soft ? (readRegister(REG_IRQ_FLAGS) & IRQ_FLAG_RX_DONE) : digitalRead(this->dio0);
-    }
 
     /** @brief Read received data from FIFO
      * 
@@ -719,8 +710,8 @@ public:
      * lowest possible spreading factor LORA_SPREADING_FACTOR_6
      * 
      * @return 0 on success.
-     * ERR_NULL if data are NULL.
-     * ERR_TRUNCATED if data buffer is shorter than received data.
+     * SX127X_ERR_NULL if data are NULL.
+     * SX127X_ERR_TRUNCATED if data buffer is shorter than received data.
      */
     uint8_t readData(uint8_t *data, uint8_t length);
 

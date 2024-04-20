@@ -105,6 +105,9 @@ uint8_t TinyMeshManager::handleRequest(TMPacket *request, bool fwd) {
     return requestHandler(request, fwd);
 }
 
+inline bool TinyMeshManager::isMediumFree(InterfaceWrapper *interface) {
+    return interface ? interface->isMediumFree() : if_manager->isMediumFree();
+}
 
 inline uint8_t TinyMeshManager::sendData(TMPacket *packet, InterfaceWrapper *interface) {
     return interface ? interface->sendData(packet->raw, packet->size(), true) : if_manager->sendData(packet->raw, packet->size());
@@ -198,15 +201,19 @@ uint8_t TinyMeshManager::loop(InterfaceWrapper *interface) {
 
             // forward packet
             if (last_ret & TMM_PACKET_FORWARD) {
-                //TODO Problem with simultaneous sending -> queue it
-                //TODO -> change how packet queue is used
-                //TODO -> another big rework ahead
-                if (sendData(&packet, interface))
+                if (send_queue.reserve())
                     ret |= TMM_ERR_FORWARD;
-                ret |= TMM_FORWARD;
+                else {
+                    send_queue.last()->packet = packet;
+                    send_queue.last()->tts = 0;
+                    ret |= TMM_FORWARD;
+                }
             }
         }
     }
+
+    if (!isMediumFree(interface))
+        return ret | TMM_MEDIUM_BUSY;
 
     last_loop_time = millis() - last_loop_time;
     bool is_empty = true;

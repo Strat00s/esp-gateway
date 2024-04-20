@@ -10,10 +10,17 @@
 //#define IF_TYPE_RF_443
 //#define IF_TYPE_ESP_NOW
 
+#define IFW_ALLOC_FAILED  255
+#define IFW_ONGOING_RX    254
+#define IFW_OK            0
+
 
 class InterfaceWrapper {
 private:
     uint8_t if_type = IF_TYPE_NONE;
+
+protected:
+    bool is_rx_ongoing = false;
 
 public:
     InterfaceWrapper(uint8_t interface_type) {
@@ -38,7 +45,11 @@ public:
      */
     virtual uint8_t stopReception() = 0;
 
-
+    /** @brief Check if transmission medium is currently free (if interface supports it and is implemented)
+     * 
+     * @return True if free, false otherwise.
+     */
+    virtual bool isMediumFree() = 0;
 
     /** @brief Send data to interface and transmit them.
      * 
@@ -46,6 +57,7 @@ public:
      * @param len Data lenght.
      * @param copy Create a copy of the data which will be sent instead of the data.
      * @return 0 on success.
+     * 255 if allocation fails when copying data.
      */
     virtual uint8_t sendData(uint8_t *data, uint8_t len, bool copy = false) = 0;
 
@@ -63,5 +75,4 @@ public:
      * @return Number of received data (packets).
      */
     virtual uint8_t hasData() = 0;
-
 };

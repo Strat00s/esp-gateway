@@ -966,8 +966,8 @@ extern "C" void app_main() {
 
 
     //configure radios
-    configureLora(&lora_434, 434.0, 0x12, 8, LORA_BANDWIDTH_125kHz, LORA_SPREADING_FACTOR_9, LORA_CODING_RATE_4_7);
-    configureLora(&lora_868, 868.0, 0x24, 8, LORA_BANDWIDTH_125kHz, LORA_SPREADING_FACTOR_9, LORA_CODING_RATE_4_7);
+    configureLora(&lora_434, 434.0, 0x12, 8, LORA_BANDWIDTH_250kHz, LORA_SPREADING_FACTOR_7, LORA_CODING_RATE_4_5);
+    configureLora(&lora_868, 868.0, 0x24, 8, LORA_BANDWIDTH_250kHz, LORA_SPREADING_FACTOR_7, LORA_CODING_RATE_4_5);
     if_manager.addInterface(&lora434_it);
     //if_manager.addInterface(&lora868_it);
 
@@ -988,12 +988,29 @@ extern "C" void app_main() {
     auto timer = millis();
     uint8_t last_ret = 0;
     uint8_t last_stat = 0;
+    uint8_t last_irq = 0;
     while(true) {
-        if (millis() - timer > 5000) {
+        if (millis() - timer > 2500) {
             timer = millis();
             uint8_t data = 0;
             uint8_t ret = tmm.queuePacket(2, TM_MSG_CUSTOM, &data, 0);
             printf("Queue: %d\n", ret);
+        }
+
+        auto stat = lora_434.readRegister(REG_MODEM_STAT);
+        if (last_stat != stat) {
+            last_stat = stat;
+            printf("Stat: ");
+            printBinary(stat, 8);
+            printf("\n");
+        }
+
+        auto irq = lora_434.getIrqFlags();
+        if (last_irq != irq) {
+            last_irq = irq;
+            printf("irq: ");
+            printBinary(irq, 8);
+            printf("\n");
         }
 
         auto ret = tmm.loop();

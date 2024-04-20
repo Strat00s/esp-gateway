@@ -7,6 +7,7 @@
 //TODO wait for reception
 //TODO copy data on transmission to buffer
 
+
 class sx127xInterfaceWrapper : public InterfaceWrapper{
 private:
     SX127X *lora;
@@ -36,23 +37,25 @@ public:
         return 0;
     }
 
+    inline bool isMediumFree() {
+        return !(lora->readRegister(REG_MODEM_STAT) & 0b00001011);
+    }
+
 
     /** @brief Transmit data on underlying LORA device.
      * 
      * @param data Data to send/transmit. They will be overwritten by "junk" since the same buffer is used to save returned SPI transaction data.
      * @param len Length of data to be transmitted.
      * @return 0 on success.
-     * 254 if there is an ongoing transmission.
+     * 1 on failure to transmit.
      * 255 if allocation fails when copying data.
      */
     uint8_t sendData(uint8_t *data, uint8_t len, bool copy) {
-        //TODO wait for ongoing tx
-
-        uint8_t ret = 0;
+        uint8_t ret = IFW_OK;
         if (copy) {
             uint8_t *tmp = new uint8_t[len];
             if (!tmp)
-                return 255;
+                return IFW_ALLOC_FAILED;
             memcpy(tmp, data, len);
             ret = lora->transmit(tmp, len);
             delete[] tmp;
@@ -70,6 +73,7 @@ public:
      * @param buf Buffer to which to copy received data. Must be 256B long (maximal data length).
      * @param len Length of received data.
      * @return 0 on success
+     * 1 on failure.
      */
     uint8_t getData(uint8_t *buf, uint8_t *len) {
         lora->setMode(SX127X_OP_MODE_STANDBY);
@@ -79,19 +83,18 @@ public:
             return 1;
         }
 
-        ret = lora->readData(buf, *len);
+        lora->readData(buf, *len);
         *len = lora->getPayloadLength();
         lora->clearIrqFlags();
-        lora->clearIrqFlags(IRQ_FLAG_RX_DONE);
 
         lora->receiveContinuous();
-        return 0;
+        return IFW_OK;
     }
 
-    /** @brief Check if interface has any new data
+    /** @brief Check if interface has any new data, and if so, how many
      * 
      */
     inline uint8_t hasData() {
-        return lora->hasData(true);
+        return lora->readRegister(REG_IRQ_FLAGS) & IRQ_FLAG_RX_DONE;
     }
 };

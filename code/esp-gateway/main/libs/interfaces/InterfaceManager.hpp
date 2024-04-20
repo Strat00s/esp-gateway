@@ -1,26 +1,11 @@
-
-
 #pragma once
 #include <stdio.h>
 #include "interfaceWrapper.hpp"
 
 
-//class InterfaceManagerBase {
-//protected:
-//    uint8_t if_cnt = 0;
-//
-//public:
-//    virtual ~InterfaceManagerBase() {}
-//    // Define virtual methods that will be implemented by InterfaceManager<N>
-//
-//    virtual uint8_t addInterface(InterfaceWrapper *interface) = 0;
-//    virtual uint8_t getInterfaceCount() = 0;
-//    virtual uint8_t hasData() = 0;
-//    virtual uint8_t getNextData(uint8_t *data, uint8_t *len) = 0;
-//    virtual uint8_t sendData(uint8_t *data, uint8_t len) = 0;
-//    virtual uint8_t sendData(uint8_t if_id, uint8_t *data, uint8_t *len) = 0;
-//};
 
+#define IFM_OK           0
+#define IFM_ALLOC_FAILED 255
 
 #define IF_COUNT 1
 
@@ -35,7 +20,8 @@ public:
     //~InterfaceManager();
 
     /** @brief Add interface wrapper
-     * @return 0 on success, 1 if no space left
+     * @return 0 on success.
+     * 1 if no space left.
      */
     uint8_t addInterface(InterfaceWrapper *interface) {
         if (if_cnt >= IF_COUNT)
@@ -43,7 +29,7 @@ public:
         
         interfaces[if_cnt] = interface;
         if_cnt++;
-        return 0;
+        return IFM_OK;
     }
 
     inline InterfaceWrapper *getInterface(uint8_t index) {
@@ -54,6 +40,13 @@ public:
         return if_cnt;
     }
 
+    bool isMediumFree() {
+        for (uint8_t i = 0; i < IF_COUNT; i++)
+            if (!interfaces[i]->isMediumFree())
+                return false;
+        return true;
+    }
+
     /** @brief Check if there are any data and if so, how many.
      * 
      * @return How many new data (packets) are available,
@@ -61,10 +54,8 @@ public:
     uint8_t hasData() {
         uint8_t data_cnt = 0;
         for (uint8_t i = 0; i < IF_COUNT; i++) {
-            if (interfaces[i] == nullptr)
-                continue;
-
-            data_cnt += interfaces[i]->hasData();
+            if (interfaces[i])
+                data_cnt += interfaces[i]->hasData();
         }
 
         return data_cnt;
@@ -81,14 +72,11 @@ public:
      */
     bool getNextData(uint8_t *data, uint8_t *len) {
         for (uint8_t i = 0; i < IF_COUNT; i++) {
-            if (interfaces[i] == nullptr)
-                continue;
-
-            if (interfaces[i]->hasData())
+            if (interfaces[i] && interfaces[i]->hasData())
                 return interfaces[i]->getData(data, len);
         }
 
-        return 255;
+        return IFM_ALLOC_FAILED;
     }
 
 
@@ -99,7 +87,7 @@ public:
      * @param len Length of the data.
      * @return 0 on success.
      * 255 if allocation failed.
-     * Other values are interface specific.
+     * Other values are interface specific (sendData).
      */
     uint8_t sendData(uint8_t *data, uint8_t len) {
         uint8_t *tmp = new uint8_t[len];
@@ -108,7 +96,7 @@ public:
 
         uint8_t ret = 0;
         for (uint8_t i = 0; i < if_cnt; i++) {
-            if (interfaces[i] == nullptr)
+            if (!interfaces[i])
                 continue;
 
             memcpy(tmp, data, len);
@@ -125,17 +113,10 @@ public:
      * @param data Data to be sent.
      * @param len Length of the data.
      * @return 0 on success.
-     * 255 if allocation failed.
-     * Other values are interface specific.
+     * Other values are interface specific (sendData).
      */
-    uint8_t sendData(uint8_t index, uint8_t *data, uint8_t len) {
-        uint8_t *tmp = new uint8_t[len];
-        if (!tmp)
-            return 255;
-        memcpy(tmp, data, len);
-        uint8_t ret = interfaces[index]->sendData(tmp, len);
-        delete[] tmp;
-        return ret;
+    inline uint8_t sendData(uint8_t index, uint8_t *data, uint8_t len) {
+        return interfaces[index]->sendData(data, len, true);
     }
 };
 
