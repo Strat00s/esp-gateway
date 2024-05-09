@@ -336,10 +336,10 @@ private:
     uint8_t high   = HIGH;
     uint8_t low    = LOW;
 #else
-    uint8_t input;
-    uint8_t output;
-    uint8_t high = 1;
-    uint8_t low  = 0;
+    uint8_t input  = 0;
+    uint8_t output = 1;
+    uint8_t high   = 1;
+    uint8_t low    = 0;
 #endif
 
 
@@ -348,19 +348,19 @@ private:
     uint8_t sf          = LORA_SPREADING_FACTOR_7 >> 4;
     float bw            = 125.0;  //bandwidth in kHz
     uint16_t symbol_cnt = 100;
-    uint8_t in_standby  = false;
+    bool in_standby     = false;
 
     //TODO make them arduino compatible by default?
     //callbacks
 #ifndef ARDUINO
-    void (*pinMode)(uint8_t pin, uint8_t mode);
-    void (*digitalWrite)(uint8_t pin, uint8_t val);
-    int (*digitalRead)(uint8_t pin);
-    void (*delay)(unsigned long);
-    unsigned long (*micros)();
+    void (*pinMode)(uint8_t pin, uint8_t mode) = nullptr;
+    void (*digitalWrite)(uint8_t pin, uint8_t val) = nullptr;
+    int (*digitalRead)(uint8_t pin) = nullptr;
+    void (*delay)(unsigned long) = nullptr;
+    unsigned long (*micros)() = nullptr;
 #endif
-    void (*SPIBeginTransfer)();
-    void (*SPIEndTransfer)();
+    void (*SPIBeginTransfer)() = nullptr;
+    void (*SPIEndTransfer)() = nullptr;
     /** @brief To be implemented by user. Transfer function for sending
      * and receiveing data over SPI
      *
@@ -370,12 +370,13 @@ private:
      * or will be filled with read data)
      * @param length Length of buffer
      */
-    void (*SPITransfer)(uint8_t addr, uint8_t *buffer, size_t length);
+    void (*SPITransfer)(uint8_t addr, uint8_t *buffer, size_t length) = nullptr;
 
     void setValidFrequency(float frequency);
 
 
 public:
+    SX127X(uint8_t cs, uint8_t rst);
     SX127X(uint8_t cs, uint8_t rst, uint8_t dio0);
     SX127X(uint8_t cs, uint8_t rst, uint8_t dio0, uint8_t dio1);
     ~SX127X();

@@ -48,7 +48,6 @@
 #include "libs/tinymesh/TinyMeshPacket.hpp"
 #include "libs/tinymesh/TinyMeshPacketID.hpp"
 #include "libs/tinymesh/TinyMeshManager.hpp"
-#include "libs/interfaces/InterfaceManager.hpp"
 #include "libs/interfaces/sx127xInterfaceWrapper.hpp"
 #include "creds.h"
 
@@ -188,9 +187,8 @@ esp_netif_ip_info_t ip_info;
 //sx127xInterfaceWrapper lora868_it(&lora_868);
 sx127xInterfaceWrapper lora434_it(&lora_434);
 sx127xInterfaceWrapper lora868_it(&lora_868);
-InterfaceManager if_manager;
 
-TinyMeshManager tmm(1, TM_NODE_TYPE_NORMAL, &if_manager);
+//TinyMeshManager tmm(1, TM_NODE_TYPE_NORMAL, &if_manager);
 
 
 /*----(STRUCTURES)----*/
@@ -209,7 +207,7 @@ typedef struct {
     std::deque<std::string> sensor_types;
     uint8_t address;
     uint8_t node_type;
-    InterfaceWrapper *interfaces[INTERFACE_COUNT];
+    //InterfaceWrapper *interfaces[INTERFACE_COUNT];
     uint8_t interface_cnt;
 } node_info_t;
 node_info_t this_node;
@@ -270,7 +268,7 @@ unsigned long micros() {
 void SPIBeginTransfer() {
     xSemaphoreTake(spi_mux, portMAX_DELAY);
     auto ret = spi_device_acquire_bus(dev_handl, portMAX_DELAY);
-    if (ret != 0)
+    if (ret)
         printf("%d\n", ret);
     ESP_ERROR_CHECK(ret);
 }
@@ -912,10 +910,10 @@ uint8_t requestHandler(TMPacket *request, bool fwd) {
         printf("Is to be forwarded\n");
 
     uint8_t data = 1;
-    if (tmm.queuePacket(request->getSource(), TM_MSG_ERR, &data, 1))
-        printf("Failed to send response\n");
-    else
-        printf("Sent response\n");
+    //if (tmm.queuePacket(request->getSource(), TM_MSG_ERR, &data, 1))
+    //    printf("Failed to send response\n");
+    //else
+    //    printf("Sent response\n");
 
     return 0;
 }
@@ -968,21 +966,21 @@ extern "C" void app_main() {
     //configure radios
     configureLora(&lora_434, 434.0, 0x12, 8, LORA_BANDWIDTH_250kHz, LORA_SPREADING_FACTOR_7, LORA_CODING_RATE_4_5);
     configureLora(&lora_868, 868.0, 0x24, 8, LORA_BANDWIDTH_250kHz, LORA_SPREADING_FACTOR_7, LORA_CODING_RATE_4_5);
-    if_manager.addInterface(&lora434_it);
+    //if_manager.addInterface(&lora434_it);
     //if_manager.addInterface(&lora868_it);
 
-    for (uint8_t i = 0; i < if_manager.getInterfaceCount(); i++) {
-        printf("Starting reception on interface %d: ", if_manager.getInterface(i)->getType());
-        if (!if_manager.getInterface(i)->startReception())
-            printf("ok\n");
-        else {
-            printf("err\n");
-        }
-    }
+    //for (uint8_t i = 0; i < if_manager.getInterfaceCount(); i++) {
+    //    printf("Starting reception on interface %d: ", if_manager.getInterface(i)->getType());
+    //    if (!if_manager.getInterface(i)->startReception())
+    //        printf("ok\n");
+    //    else {
+    //        printf("err\n");
+    //    }
+    //}
 
-    tmm.registerMillis(millis);
-    tmm.registerRequestHandler(requestHandler);
-    tmm.registerResponseHandler(responseHandler);
+    //tmm.registerMillis(millis);
+    //tmm.registerRequestHandler(requestHandler);
+    //tmm.registerResponseHandler(responseHandler);
 
     /*----(MAIN LOOP)----*/
     auto timer = millis();
@@ -993,7 +991,7 @@ extern "C" void app_main() {
         if (millis() - timer > 2500) {
             timer = millis();
             uint8_t data = 0;
-            uint8_t ret = tmm.queuePacket(2, TM_MSG_CUSTOM, &data, 0);
+        //    uint8_t ret = tmm.queuePacket(2, TM_MSG_CUSTOM, &data, 0);
             printf("Queue: %d\n", ret);
         }
 
@@ -1013,10 +1011,10 @@ extern "C" void app_main() {
             printf("\n");
         }
 
-        auto ret = tmm.loop();
+        //auto ret = tmm.loop();
         if (ret != last_ret) {
             last_ret = ret;
-            printf("loop: %d %d\n", ret, tmm.getStatus());
+        //    printf("loop: %d %d\n", ret, tmm.getStatus());
         }
 
         vTaskDelay(pdMS_TO_TICKS(1));

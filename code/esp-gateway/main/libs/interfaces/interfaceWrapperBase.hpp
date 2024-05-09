@@ -9,27 +9,25 @@
 //#define IF_TYPE_NRF24
 //#define IF_TYPE_RF_443
 //#define IF_TYPE_ESP_NOW
+#define IF_TYPE_MULTI 99
 
 #define IFW_ALLOC_FAILED  255
 #define IFW_ONGOING_RX    254
 #define IFW_OK            0
 
 
-class InterfaceWrapper {
+class InterfaceWrapperBase {
 private:
     uint8_t if_type = IF_TYPE_NONE;
 
-protected:
-    bool is_rx_ongoing = false;
-
 public:
-    InterfaceWrapper(uint8_t interface_type) {
-        this->if_type = interface_type;
+    InterfaceWrapperBase(uint8_t interface_type) {
+        if_type = interface_type;
     }
-    //~InterfaceWrapper() {};
+    //~InterfaceWrapperBase() {};
 
     inline uint8_t getType() {
-        return this->if_type;
+        return if_type;
     }
 
 
@@ -49,7 +47,7 @@ public:
      * 
      * @return True if free, false otherwise.
      */
-    virtual bool isMediumFree() = 0;
+    virtual bool isMediumBusy() = 0;
 
     /** @brief Send data to interface and transmit them.
      * 
@@ -59,7 +57,7 @@ public:
      * @return 0 on success.
      * 255 if allocation fails when copying data.
      */
-    virtual uint8_t sendData(uint8_t *data, uint8_t len, bool copy = false) = 0;
+    virtual uint8_t sendData(uint8_t *data, uint8_t len) = 0;
 
     /** @brief Get data from interface.
      * 

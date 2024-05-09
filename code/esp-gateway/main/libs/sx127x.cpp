@@ -21,9 +21,11 @@ void SX127X::setValidFrequency(float frequency) {
 }
 
 //public
-SX127X::SX127X(uint8_t cs, uint8_t rst, uint8_t dio0) {
+SX127X::SX127X(uint8_t cs, uint8_t rst) {
     this->cs   = cs;
     this->rst  = rst;
+}
+SX127X::SX127X(uint8_t cs, uint8_t rst, uint8_t dio0) : SX127X(cs, rst) {
     this->dio0 = dio0;
 }
 
@@ -39,17 +41,15 @@ SX127X::~SX127X() {
 //callback functions
 #ifndef ARDUINO
 void SX127X::registerPinMode(void (*func)(uint8_t, uint8_t), uint8_t input, uint8_t output) {
-    this->pinMode                   = func;
-    this->input                     = input;
-    this->output                    = output;
-    //this->flags.single.has_pin_mode = true;
+    this->pinMode = func;
+    this->input   = input;
+    this->output  = output;
 }
 
 void SX127X::registerDigitalWrite(void (*func)(uint8_t, uint8_t), uint8_t high, uint8_t low) {
-    this->digitalWrite                   = func;
-    this->high                       = high;
-    this->low                        = low;
-    //this->flags.single.has_pin_write = true;
+    this->digitalWrite = func;
+    this->high         = high;
+    this->low          = low;
 }
 #endif
 

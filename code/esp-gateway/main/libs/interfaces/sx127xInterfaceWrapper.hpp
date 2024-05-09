@@ -1,6 +1,6 @@
 #pragma once
 #include <stdio.h>
-#include "InterfaceWrapper.hpp"
+#include "InterfaceWrapperBase.hpp"
 #include "libs/sx127x.hpp"
 
 //TODO remove last_ret a getstatus
@@ -8,13 +8,13 @@
 //TODO copy data on transmission to buffer
 
 
-class sx127xInterfaceWrapper : public InterfaceWrapper{
+class sx127xInterfaceWrapper : public InterfaceWrapperBase{
 private:
     SX127X *lora;
 
 public:
 
-    sx127xInterfaceWrapper(SX127X *lora) : InterfaceWrapper(IF_TYPE_SX127X) {
+    sx127xInterfaceWrapper(SX127X *lora) : InterfaceWrapperBase(IF_TYPE_SX127X) {
         this->lora = lora;
     }
 
@@ -37,8 +37,8 @@ public:
         return 0;
     }
 
-    inline bool isMediumFree() {
-        return !(lora->readRegister(REG_MODEM_STAT) & 0b00001011);
+    inline bool isMediumBusy() {
+        return (lora->readRegister(REG_MODEM_STAT) & 0b00001011);
     }
 
 
@@ -50,18 +50,14 @@ public:
      * 1 on failure to transmit.
      * 255 if allocation fails when copying data.
      */
-    uint8_t sendData(uint8_t *data, uint8_t len, bool copy) {
+    uint8_t sendData(uint8_t *data, uint8_t len) {
         uint8_t ret = IFW_OK;
-        if (copy) {
-            uint8_t *tmp = new uint8_t[len];
-            if (!tmp)
-                return IFW_ALLOC_FAILED;
-            memcpy(tmp, data, len);
-            ret = lora->transmit(tmp, len);
-            delete[] tmp;
-        }
-        else
-            ret = lora->transmit(data, len);
+        uint8_t *tmp = new uint8_t[len];
+        if (!tmp)
+            return IFW_ALLOC_FAILED;
+        memcpy(tmp, data, len);
+        ret = lora->transmit(tmp, len);
+        delete[] tmp;
 
         lora->receiveContinuous();
         return ret & IRQ_FLAG_TX_DONE ? 0 : 1;

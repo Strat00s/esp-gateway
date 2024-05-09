@@ -1,7 +1,7 @@
 #include "TinyMeshPacket.hpp"
 #include "TinyMeshPacketID.hpp"
-#include "../interfaces/InterfaceManager.hpp"
 #include "../containers/StaticDeque.hpp"
+#include "../interfaces/interfaceWrapperBase.hpp"
 
 
 #define TMM_QUEUE_SIZE 5
@@ -47,8 +47,8 @@ typedef struct {
 
 class TinyMeshManager {
 private:
-    InterfaceManager *if_manager = nullptr;
-    
+    InterfaceWrapperBase *interface = nullptr;
+
     uint8_t address      = TM_DEFAULT_ADDRESS;
     uint8_t node_type    = TM_NODE_TYPE_NORMAL;
     uint8_t sequence_num = 0;
@@ -124,18 +124,14 @@ private:
 
     uint8_t handleRequest(TMPacket *request, bool fwd);
 
-    bool isMediumFree(InterfaceWrapper *interface = nullptr);
-
-    uint8_t sendData(TMPacket *packet, InterfaceWrapper *interface = nullptr);
-
     /** @brief Handle incoming packets*/
-    uint8_t receivePacket(InterfaceWrapper *interface = nullptr);
+    uint8_t receivePacket();
 
 
 public:
-    TinyMeshManager(InterfaceManager *interface_manager = nullptr);
-    TinyMeshManager(uint8_t address, InterfaceManager *interface_manager = nullptr);
-    TinyMeshManager(uint8_t address, uint8_t node_type, InterfaceManager *interface_manager = nullptr);
+    TinyMeshManager(InterfaceWrapperBase *interface = nullptr);
+    TinyMeshManager(uint8_t address, InterfaceWrapperBase *interface = nullptr);
+    TinyMeshManager(uint8_t address, uint8_t node_type, InterfaceWrapperBase *interface = nullptr);
 
 
     inline void registerMillis(unsigned long (*millis)()) {
@@ -199,5 +195,5 @@ public:
      * @param TMM_FORWARD
      * @param TMM_ERR_NULL if both interface or interface manager are null
      */
-    uint8_t loop(InterfaceWrapper *interface = nullptr);
+    uint8_t loop();
 };

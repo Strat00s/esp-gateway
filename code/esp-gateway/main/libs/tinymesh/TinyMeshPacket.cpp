@@ -143,19 +143,14 @@ uint8_t TMPacket::checkHeader() {
 
     switch (getMessageType()) {
     case TM_MSG_OK:
-        if (getDestination() == TM_BROADCAST_ADDRESS)
-            ret |= TM_ERR_MSG_TYPE;
-        break;
-
     case TM_MSG_ERR:
         if (getDestination() == TM_BROADCAST_ADDRESS)
-            ret |= TM_ERR_MSG_TYPE;
+            ret |= TM_ERR_ADDRESS | TM_ERR_MSG_TYPE;
+        break;
+
     case TM_MSG_PING:
         if (getDataLength() != 1)
             ret |= TM_ERR_MSG_DATA_LEN;
-        break;
-
-    case TM_MSG_CUSTOM:
         break;
 
     default:
