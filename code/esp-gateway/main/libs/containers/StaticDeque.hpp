@@ -12,6 +12,22 @@ public:
     //StaticDeque(/* args */);
     //~StaticDeque();
 
+    /** @brief Push item to the front of the deque.
+     * 
+     * @param item Item to be pushed.
+     * @return 0 on success.
+     * 1 if full.
+     */
+    uint8_t pushFront(const T& item) {
+        if (count >= N)
+            return 1;
+        
+        front = (front - 1 + N) % N;
+        data[front] = item;
+        count++;
+        return 0;
+    }
+
     /** @brief Push item to the back of the deque.
      * 
      * @param item Item to be pushed.
@@ -67,6 +83,30 @@ public:
         return 0;
     }
 
+    /** @brief Insert item at the specified index
+     * 
+     * @param item 
+     * @param index 
+     * @return 0 on success.
+     * 1 if full.
+     */
+    uint8_t insert(const T& item, size_t index) {
+        if (count >= N)
+            return 1;
+        if (!index)
+            return pushFront(item);
+        if (index >= count - 1)
+            return pushBack(item);
+
+        //TODO finish
+        if (index < count / 2) {
+
+        }
+        else {
+
+        }
+    }
+
     /** @brief Get reference to first item.*/
     inline T *first() {
         return &data[front];
@@ -85,11 +125,7 @@ public:
         return data[(front + index) % N];
     }
 
-    inline T* at(size_t index) {
-        return &data[(front + index) % N];
-    }
 
-    
     inline bool full() const {
         return count == N;
     }
