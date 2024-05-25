@@ -194,7 +194,7 @@ uint8_t TinyMeshManager::loop() {
                     ret |= TMM_ERR_FORWARD;
                 else {
                     send_queue.last()->packet = packet;
-                    send_queue.last()->tts = 0;
+                    send_queue.last()->tts = 100 + address * 100 % 100;
                     ret |= TMM_FORWARD;
                 }
             }

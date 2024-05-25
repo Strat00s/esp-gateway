@@ -19,6 +19,7 @@
     VERSION     8b
     SOURCE      8b
     DESTINATION 8b
+    SEQUENCE    8b
     FLAGS       8b
         7-6: REPEAT CNT
         5-2: MESSAGE TYPE
