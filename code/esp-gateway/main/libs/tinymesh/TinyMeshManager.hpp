@@ -95,8 +95,8 @@ private:
      */
     bool isResponse(TMPacket *response) {
         for (size_t i = 0; i < send_queue.size(); i++) {
-            if (response->getSource() == send_queue[i].getDestination() && response->getDestination() == send_queue[i].getSource()) {
-                last_request = &send_queue[i];
+            if (response->getSource() == send_queue[i].packet.getDestination() && response->getDestination() == send_queue[i].packet.getSource()) {
+                last_request = &send_queue[i].packet;
                 return true;
             }
         }
@@ -283,18 +283,19 @@ public:
      * @param length Length of the data.
      * @return TMM_OK on success.
      */
-    uint8_t queuePacket(uint8_t destination, uint8_t message_type, uint8_t *data, uint8_t length) {
+    uint8_t queuePacket(uint8_t destination, uint8_t message_type, uint8_t *data = nullptr, uint8_t length = 0) {
         if (send_queue.reserve())
             return TMM_ERR_QUEUE_FULL;
 
-        auto request = send_queue.last();
+        packet_tts_t *request = send_queue.last();
         last_ret = request->packet.buildPacket(address, destination, sequence_num++, node_type, message_type, 0, data, length);
+        printf("packet build: %d\n", last_ret);
         if (last_ret) {
             request->packet.clear();
             send_queue.popBack();
             return TMM_ERR_BUILD_PACKET;
         }
-        request->tts = 0;
+        request->tts = TOA;
         return TMM_OK;
     }
 
@@ -371,13 +372,14 @@ public:
         bool sent = false;
         bool skip = false;
         for (size_t i = 0; i < send_queue.size(); i++) {
-            auto &next = send_queue[i];
+            packet_tts_t *next = &send_queue[i];
         
             if (next->packet.empty())
                 continue;
 
             if (next->packet.getRepeatCount() == 3) {
                 next->packet.clear();
+                printf("TIMEOUT\n");
                 ret |= TMM_ERR_TIMEOUT;
             }
 
@@ -387,7 +389,7 @@ public:
                 continue;
             }
 
-            if (sent || skip) {
+            if (sent) {
                 if (next->tts < TOA)
                     next->tts = TOA;
                 continue;
@@ -395,8 +397,14 @@ public:
 
             //send the packet
             last_ret = interface->sendData(next->packet.raw, next->packet.size());
-            if (last_ret)
+            if (last_ret) {
                 skip = true;
+                continue;
+            }
+            
+            next->packet.setRepeatCount(next->packet.getRepeatCount() + 1);
+            next->tts = 1000;
+
         
             sent = true;
         }
