@@ -37,10 +37,12 @@
 #define TOA 50 //time on air
 
 //TODO change timeout acording to network size (max PING)
-//TODO scan network
+    //TODO scan network
 //TODO fix initial TTS of a packet (currently starts at TOA)
 //TODO change TOA to be requested from interface
 
+//TODO return 16bit from loop as flags
+//TODO rework return values in general
 
 typedef struct {
     TMPacket packet;
@@ -95,7 +97,9 @@ private:
      */
     bool isResponse(TMPacket *response) {
         for (size_t i = 0; i < send_queue.size(); i++) {
-            if (response->getSource() == send_queue[i].packet.getDestination() && response->getDestination() == send_queue[i].packet.getSource()) {
+            if (!send_queue[i].packet.isResponse() &&
+                response->getSource() == send_queue[i].packet.getDestination() &&
+                response->getDestination() == send_queue[i].packet.getSource()) {
                 last_request = &send_queue[i].packet;
                 return true;
             }
@@ -168,9 +172,6 @@ private:
      * @return TMM_PACKET_ macros. 
      */
     uint8_t classifyPacket() {
-        //if (isResponse(&send_queue[curr_index], &packet))
-        //    return TMM_PACKET_RESPONSE;
-
         // response
         if (packet.isResponse()) {
             if (isResponse(&packet))
@@ -274,6 +275,9 @@ public:
         return last_ret;
     }
 
+    size_t queueSize() {
+        return send_queue.size();
+    }
 
     /** @brief Queue request to be sent.
      * 
@@ -289,7 +293,6 @@ public:
 
         packet_tts_t *request = send_queue.last();
         last_ret = request->packet.buildPacket(address, destination, sequence_num++, node_type, message_type, 0, data, length);
-        printf("packet build: %d\n", last_ret);
         if (last_ret) {
             request->packet.clear();
             send_queue.popBack();
@@ -401,12 +404,16 @@ public:
                 skip = true;
                 continue;
             }
+
+            sent = true;
+
+            if (next->packet.isResponse()) {
+                next->packet.clear();
+                continue;
+            }
             
             next->packet.setRepeatCount(next->packet.getRepeatCount() + 1);
             next->tts = 1000;
-
-        
-            sent = true;
         }
 
 

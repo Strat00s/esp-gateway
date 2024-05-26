@@ -93,6 +93,11 @@
 #define SD_CS   GPIO_NUM_10
 
 
+#define PAYLOAD_OUT "PING"
+#define PAYLOAD_IN  "PONG"
+bool answer = false;
+unsigned long timer = 0;
+
 
 using namespace std;
 
@@ -303,12 +308,22 @@ uint8_t requestHandler(TMPacket *request, bool fwd) {
     if (fwd)
         printf("Is to be forwarded\n");
 
-    uint8_t data = 1;
-    //if (tmm.queuePacket(request->getSource(), TM_MSG_ERR, &data, 1))
-    //    printf("Failed to send response\n");
-    //else
-    //    printf("Sent response\n");
+    uint8_t ret = 1;
+    if (request->getMessageType() == TM_MSG_CUSTOM && request->getDataLength() == 5) {
+        char *data = (char *)(request->getData());
+        printf("Got data: %s\n", data);
+        if (!strcmp(data, PAYLOAD_IN)) {
+            ret = tmm.queuePacket(request->getSource(), TM_MSG_OK);
+            printf("Send ret: %d\n", ret);
+            answer = true;
+            timer = millis();
+            return 0;
+        }
+    }
 
+    
+    ret = tmm.queuePacket(request->getSource(), TM_MSG_ERR, &ret, 1);
+    printf("Send ret: %d\n", ret);
     return 0;
 }
 
@@ -339,14 +354,15 @@ extern "C" void app_main() {
 
 
     /*----(MAIN LOOP)----*/
-    auto timer = millis();
     uint8_t last_ret = 256;
     uint8_t ret = 0;
+    answer = true;
     while(true) {
-        if (millis() - timer > 5000) {
+        if (answer && millis() - timer > 2000) {
+            answer = false;
             timer = millis();
-            uint8_t data = 0;
-            ret = tmm.queuePacket(1, TM_MSG_PING, &data, 1);
+            uint8_t data[] = PAYLOAD_OUT;
+            ret = tmm.queuePacket(1, TM_MSG_CUSTOM, data, 5);
             printf("Queued 1 packet: %d\n", ret);
         }
 
@@ -354,8 +370,7 @@ extern "C" void app_main() {
         if (ret != last_ret) {
             last_ret = ret;
             printf("Loop: %d\n", ret);
+            printf("Queue size: %d\n", tmm.queueSize());
         }
-
-        vTaskDelay(pdMS_TO_TICKS(1));
     }
 }

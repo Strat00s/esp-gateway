@@ -137,9 +137,6 @@ public:
     // * Also sets if a message is a response, if type is OK or ERR.*/
     void setMessageType(uint8_t msg_type);
 
-    //inline void setIsResponse(bool is_response) {
-    //    setBits(&raw[TM_FLAGS_POS], is_response, TM_IS_RESP_MSB, TM_IS_RESP_LSB);
-    //}
 
     /** @brief Set entire flag field at once
      *
