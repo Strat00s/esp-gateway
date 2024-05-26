@@ -111,14 +111,9 @@
 
 class TMPacket {
 private:
+    uint8_t raw[TM_PACKET_SIZE] = {0};
 
 public:
-    uint8_t raw[TM_PACKET_SIZE];
-
-    //TMPacket() {}
-    //~TMPacket() {}
-
-
     inline void setVersion(uint8_t version) {
         raw[TM_VERSION_POS] = version;
     }

@@ -34,13 +34,12 @@
 #define TMM_PACKET_REQUEST      0b00001000
 #define TMM_PACKET_RESPONSE     0b00010000
 
+#define TOA 50 //time on air
 
-/*
-
-Send packet one by one FIFO
-IF response is to be sent, move it to front and send it
-
-*/
+//TODO change timeout acording to network size (max PING)
+//TODO scan network
+//TODO fix initial TTS of a packet (currently starts at TOA)
+//TODO change TOA to be requested from interface
 
 
 typedef struct {
@@ -58,9 +57,9 @@ private:
     uint8_t node_type    = TM_NODE_TYPE_NORMAL;
     uint8_t sequence_num = 0;
 
-    TMPacket packet; //request packet
+    TMPacket packet; //incoming packet
     StaticDeque<packet_tts_t, Q_SIZE> send_queue;
-    size_t request_index = 0;
+    TMPacket *last_request;
     unsigned long last_loop_time = 0;
 
     TMPacketID pid_list[PID_SIZE];
@@ -95,8 +94,13 @@ private:
      * @return True if response packet is a response to the request packet.
      */
     bool isResponse(TMPacket *response) {
-        auto request = send_queue[request_index].packet;
-        return response->getSource() == request.getDestination() && response->getDestination() == request.getSource();
+        for (size_t i = 0; i < send_queue.size(); i++) {
+            if (response->getSource() == send_queue[i].getDestination() && response->getDestination() == send_queue[i].getSource()) {
+                last_request = &send_queue[i];
+                return true;
+            }
+        }
+        return false;
     }
 
 
@@ -110,7 +114,8 @@ private:
         pid.setSource(packet->getSource());
         pid.setDestination(packet->getDestination());
         pid.setSequence(packet->getSequence());
-        pid.setFlags(packet->getFlags());
+        //pid.setFlags(packet->getFlags());
+        pid.setRepeatCount(packet->getRepeatCount());
         return pid;
     }
 
@@ -123,7 +128,8 @@ private:
         pid->setSource(packet->getSource());
         pid->setDestination(packet->getDestination());
         pid->setSequence(packet->getSequence());
-        pid->setFlags(packet->getFlags());
+        //pid->setFlags(packet->getFlags());
+        pid->setRepeatCount(packet->getRepeatCount());
     }
 
     /** @brief Save ID of a packet to pid_list.
@@ -152,10 +158,7 @@ private:
 
         //add new pid
         setPacketID(&pid_list[pid_index], packet);
-        pid_index++;
-        if (pid_index >= PID_SIZE)
-            pid_index = 0;
-
+        pid_index = (pid_index + 1) % PID_SIZE;
         return true;
     }
 
@@ -323,88 +326,93 @@ public:
 
             // not a duplicate packet
             if (savePacketID(&packet)) {
+                //increase ping
                 if (packet.getMessageType() == TM_MSG_PING)
                     packet.getData()[0]++;
 
-                // handle request
+                //handle request
                 if (last_ret & TMM_PACKET_REQUEST) {
                     last_ret = handleRequest(&packet, last_ret & TMM_PACKET_FORWARD);
                     ret |= TMM_REQUEST;
                 }
 
-                // handle response
+                //handle response
                 if (last_ret & TMM_PACKET_RESPONSE) {
-                    last_ret = responseHandler(&send_queue[request_index].packet, &packet);
-                    send_queue[request_index].packet.clear();
+                    last_ret = responseHandler(last_request, &packet);
+                    last_request->clear();
                     ret |= TMM_RESPONSE;
                 }
 
-                // forward packet
+                //forward packet
                 if (last_ret & TMM_PACKET_FORWARD) {
                     if (send_queue.full())
                         ret |= TMM_ERR_FORWARD;
                     else {
-                        send_queue.insert({packet, 50 + address * 50 % 50}, request_index);
-                        request_index++;
+                        send_queue.pushBack({packet, TOA + (address * TOA) % TOA});
                         ret |= TMM_FORWARD;
                     }
                 }
             }
         }
 
-        auto next = send_queue[0];
+        //TODO queue packets as before
+        //just push them to back
+        //but now, every newly added packet has to be scheduled at least time-on-air ms away from next transmission
 
-        //packet has to wait
-        last_loop_time = millis() - last_loop_time;
-        if (next->tts > last_loop_time) {
-            next->tts -= last_loop_time;
-            last_loop_time = millis();
-            return ret | TMM_AWAIT;
-        }
-        last_loop_time = millis();
-
-        //send queue is empty
         if (send_queue.empty())
-            return ret | TMM_QUEUE_EMPTY;
+            return (ret & 0xF0) | TMM_QUEUE_EMPTY;
 
+        //medium is busy
+        if (interface->isMediumBusy())
+            return ret | TMM_MEDIUM_BUSY;
 
-        //TODO fix where to put forwarded packets
-        //currently put to the front, but that breaks things
-        //TODO properly program the timeout and other errors below
-        //TODO when to actually clear the queue?
-        //TODO request index
+        auto time_passed = millis() - last_loop_time;
+        last_loop_time = millis();
+        bool sent = false;
+        bool skip = false;
+        for (size_t i = 0; i < send_queue.size(); i++) {
+            auto &next = send_queue[i];
+        
+            if (next->packet.empty())
+                continue;
 
-        //timeout
-        if (next->packet.getRepeatCount() == 3 && !next->packet.isResponse()) {
-            next->packet.clear();
-            ret |= TMM_ERR_TIMEOUT;
-        }
+            if (next->packet.getRepeatCount() == 3) {
+                next->packet.clear();
+                ret |= TMM_ERR_TIMEOUT;
+            }
 
-        else {
-            //medium is busy
-            if (interface->isMediumBusy())
-                return ret | TMM_MEDIUM_BUSY;
+            //update packet timer
+            if (next->tts > time_passed) {
+                next->tts -= time_passed;
+                continue;
+            }
+
+            if (sent || skip) {
+                if (next->tts < TOA)
+                    next->tts = TOA;
+                continue;
+            }
 
             //send the packet
             last_ret = interface->sendData(next->packet.raw, next->packet.size());
-
-            //forwarded packet -> fix our request indedx
-            if (next->getDestination != address) {
-                request_index--;
-                next->clear();
-            }
-
             if (last_ret)
-                return (ret & 0xF0) | TMM_ERR_SEND_DATA;
+                skip = true;
+        
+            sent = true;
         }
 
-        while (send_queue[0].packet.empty()) {
+
+        while (!send_queue.empty() && send_queue.first()->packet.empty())
             send_queue.popFront();
-        }
-        
-        if (last_ret)
+
+        while (!send_queue.empty() && send_queue.last()->packet.empty())
+            send_queue.popBack();
+
+        if (skip)
             return (ret & 0xF0) | TMM_ERR_SEND_DATA;
 
+        if (!sent)
+            return (ret & 0xF0) | TMM_AWAIT;
 
         return ret | TMM_SENT;
     }
