@@ -134,7 +134,7 @@ uint8_t TMPacket::checkHeader() {
     if (getVersion() != TM_VERSION)
         ret |= TM_ERR_VERSION;
 
-    if (getSource() == TM_BROADCAST_ADDRESS || getSequence() == getDestination())
+    if (getSource() == TM_BROADCAST_ADDRESS || getSource() == getDestination())
         ret |= TM_ERR_ADDRESS;
 
     // data too long
