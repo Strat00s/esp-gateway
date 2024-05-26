@@ -83,6 +83,7 @@ public:
         return 0;
     }
 
+
     /** @brief Insert item at the specified index
      * 
      * @param item 
@@ -90,22 +91,26 @@ public:
      * @return 0 on success.
      * 1 if full.
      */
-    uint8_t insert(const T& item, size_t index) {
-        if (count >= N)
-            return 1;
-        if (!index)
-            return pushFront(item);
-        if (index >= count - 1)
-            return pushBack(item);
-
-        //TODO finish
-        if (index < count / 2) {
-
-        }
-        else {
-
-        }
-    }
+    //uint8_t insert(const T& item, size_t index) {
+    //    if (count >= N)
+    //        return 1;
+    //    if (!index)
+    //        return pushFront(item);
+    //    if (index >= count - 1)
+    //        return pushBack(item);
+    //    if (index < count / 2) {
+    //        front = (front - 1 + N) % N;
+    //        for (size_t i = front; i < index; i++)
+    //            data[i % N] = data[(i + 1) % N];
+    //        count++;
+    //    }
+    //    else {
+    //        for (size_t i = count; i > index; i--)
+    //            data[(front + i) % N] = data[(front + i - 1 + N) % N];
+    //        count++;
+    //    }
+    //    data[index] = item;
+    //}
 
     /** @brief Get reference to first item.*/
     inline T *first() {
