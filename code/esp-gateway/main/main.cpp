@@ -93,6 +93,7 @@
 #define SD_CS   GPIO_NUM_10
 
 
+#define DATA_LEN 249
 #define PAYLOAD_OUT "PING"
 #define PAYLOAD_IN  "PONG"
 bool answer = false;
@@ -115,7 +116,7 @@ spi_device_handle_t dev_handl;
 //interfaces
 sx127xInterfaceWrapper lora434_it(&lora_434);
 sx127xInterfaceWrapper lora868_it(&lora_868);
-TinyMeshManager<10, 20> tmm(0, TM_NODE_TYPE_NORMAL, &lora434_it);
+TinyMeshManager<10, 20, DATA_LEN> tmm(0, TM_NODE_TYPE_NORMAL, &lora434_it);
 
 //TinyMeshManager tmm(1, TM_NODE_TYPE_NORMAL, &if_manager);
 
@@ -186,7 +187,7 @@ void printBinary(uint32_t num, uint8_t len) {
     }
 }
 
-void printPacket(TMPacket *packet) {
+void printPacket(TMPacket<DATA_LEN> *packet) {
     printf("Version:             %d\n", packet->getVersion());
     printf("Source address:      %d\n", packet->getSource());
     printf("Destination address: %d\n", packet->getDestination());
@@ -301,7 +302,7 @@ void configureLora(SX127X *lora, float freq, uint8_t sync_word, uint16_t preambl
 
 
 
-uint8_t requestHandler(TMPacket *request, bool fwd) {
+uint8_t requestHandler(TMPacket<DATA_LEN> *request, bool fwd) {
     printf("Got request:\n");
     printPacket(request);
     printf("--------------------------------------\n");
@@ -327,7 +328,7 @@ uint8_t requestHandler(TMPacket *request, bool fwd) {
     return 0;
 }
 
-uint8_t responseHandler(TMPacket *request, TMPacket *response) {
+uint8_t responseHandler(TMPacket<DATA_LEN> *request, TMPacket<DATA_LEN> *response) {
     printf("Got response:\n");
     printPacket(response);
     printf("to request:\n");

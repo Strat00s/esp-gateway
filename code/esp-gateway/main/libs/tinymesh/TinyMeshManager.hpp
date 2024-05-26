@@ -44,13 +44,14 @@
 //TODO return 16bit from loop as flags
 //TODO rework return values in general
 
-typedef struct {
-    TMPacket packet;
+template<size_t DATA_LEN>
+struct packet_tts_t {
+    TMPacket<DATA_LEN> packet;
     unsigned long tts;
-} packet_tts_t;
+};
 
 
-template <size_t Q_SIZE, size_t PID_SIZE = 10>
+template <size_t Q_SIZE, size_t PID_SIZE = 10, uint8_t DATA_LEN = 16>
 class TinyMeshManager {
 private:
     InterfaceWrapperBase *interface = nullptr;
@@ -59,9 +60,9 @@ private:
     uint8_t node_type    = TM_NODE_TYPE_NORMAL;
     uint8_t sequence_num = 0;
 
-    TMPacket packet; //incoming packet
-    StaticDeque<packet_tts_t, Q_SIZE> send_queue;
-    TMPacket *last_request;
+    TMPacket<DATA_LEN> packet; //incoming packet
+    StaticDeque<packet_tts_t<DATA_LEN>, Q_SIZE> send_queue;
+    TMPacket<DATA_LEN> *last_request;
     unsigned long last_loop_time = 0;
 
     TMPacketID pid_list[PID_SIZE];
@@ -79,7 +80,7 @@ private:
      * 
      * @return 0 on success.
      */
-    uint8_t (*requestHandler)(TMPacket *request, bool fwd);
+    uint8_t (*requestHandler)(TMPacket<DATA_LEN> *request, bool fwd);
 
     /** @brief  Response handler to be implemented by the user.
      * 
@@ -88,14 +89,14 @@ private:
      * 
      * @return 0 on success.
      */
-    uint8_t (*responseHandler)(TMPacket *request, TMPacket *response);
+    uint8_t (*responseHandler)(TMPacket<DATA_LEN> *request, TMPacket<DATA_LEN> *response);
 
     /** @brief Check if a packet is a response to any queued packet
      * 
      * @param response Received packet
      * @return True if response packet is a response to the request packet.
      */
-    bool isResponse(TMPacket *response) {
+    bool isResponse(TMPacket<DATA_LEN> *response) {
         for (size_t i = 0; i < send_queue.size(); i++) {
             if (!send_queue[i].packet.isResponse() &&
                 response->getSource() == send_queue[i].packet.getDestination() &&
@@ -113,7 +114,7 @@ private:
      * @param packet Packet for which to create ID.
      * @return The packet ID.
      */
-    TMPacketID createPacketID(TMPacket *packet) {
+    TMPacketID createPacketID(TMPacket<DATA_LEN> *packet) {
         TMPacketID pid;
         pid.setSource(packet->getSource());
         pid.setDestination(packet->getDestination());
@@ -128,7 +129,7 @@ private:
      * @param pid Packet ID which to set.
      * @param packet Packet which to mirror.
      */
-    void setPacketID(TMPacketID *pid, TMPacket *packet) {
+    void setPacketID(TMPacketID *pid, TMPacket<DATA_LEN> *packet) {
         pid->setSource(packet->getSource());
         pid->setDestination(packet->getDestination());
         pid->setSequence(packet->getSequence());
@@ -142,7 +143,7 @@ private:
      * @return True on success.
      * False if packet is a duplicate. 
      */
-    bool savePacketID(TMPacket *packet) {
+    bool savePacketID(TMPacket<DATA_LEN> *packet) {
         for (uint8_t i = 0; i < PID_SIZE; i++) {
             
             //pid exists
@@ -194,7 +195,7 @@ private:
     }
 
 
-    uint8_t handleRequest(TMPacket *request, bool fwd) {
+    uint8_t handleRequest(TMPacket<DATA_LEN> *request, bool fwd) {
         if (request->getMessageType() == TM_MSG_PING) {
             if (fwd)
                 return TMM_OK;
@@ -211,7 +212,7 @@ private:
         if (!interface->hasData())
             return TMM_NO_DATA;
 
-        uint8_t len = TM_PACKET_SIZE;
+        uint8_t len = TM_HEADER_LENGTH + DATA_LEN;
         last_ret = interface->getData(packet.raw, &len);
         if (last_ret)
             return TMM_ERR_GET_DATA;
@@ -239,11 +240,11 @@ public:
         this->millis = millis;
     }
 
-    inline void registerRequestHandler(uint8_t (*func)(TMPacket *, bool)) {
+    inline void registerRequestHandler(uint8_t (*func)(TMPacket<DATA_LEN> *, bool)) {
         this->requestHandler = func;
     }
 
-    inline void registerResponseHandler(uint8_t (*func)(TMPacket *, TMPacket *)) {
+    inline void registerResponseHandler(uint8_t (*func)(TMPacket<DATA_LEN> *, TMPacket<DATA_LEN> *)) {
         this->responseHandler = func;
     }
 
@@ -291,7 +292,7 @@ public:
         if (send_queue.reserve())
             return TMM_ERR_QUEUE_FULL;
 
-        packet_tts_t *request = send_queue.last();
+        packet_tts_t<DATA_LEN> *request = send_queue.last();
         last_ret = request->packet.buildPacket(address, destination, sequence_num++, node_type, message_type, 0, data, length);
         if (last_ret) {
             request->packet.clear();
@@ -375,7 +376,7 @@ public:
         bool sent = false;
         bool skip = false;
         for (size_t i = 0; i < send_queue.size(); i++) {
-            packet_tts_t *next = &send_queue[i];
+            packet_tts_t<DATA_LEN> *next = &send_queue[i];
         
             if (next->packet.empty())
                 continue;
