@@ -23,8 +23,8 @@ public:
      * 
      * @return Always returns true
      */
-    inline uint8_t startReception() {
-        lora->receiveContinuous();
+    uint8_t startReception() {
+        lora->receive();
         return 0;
     }
 
@@ -32,12 +32,12 @@ public:
      * 
      * @return Always returns true
      */
-    inline uint8_t stopReception() {
+    uint8_t stopReception() {
         lora->setMode(SX127X_OP_MODE_STANDBY);
         return 0;
     }
 
-    inline bool isMediumBusy() {
+    bool isMediumBusy() {
         return (lora->readRegister(REG_MODEM_STAT) & 0b00001011);
     }
 
@@ -59,8 +59,8 @@ public:
         ret = lora->transmit(tmp, len);
         delete[] tmp;
 
-        lora->receiveContinuous();
-        return ret & IRQ_FLAG_TX_DONE ? 0 : 1;
+        lora->receive();
+        return (ret & IRQ_FLAG_TX_DONE) ? 0 : 1;
     }
 
     /** @brief Retrieve data from underlying LORA device.
@@ -73,24 +73,50 @@ public:
      */
     uint8_t getData(uint8_t *buf, uint8_t *len) {
         lora->setMode(SX127X_OP_MODE_STANDBY);
-        uint8_t ret = lora->checkPayloadIntegrity();
-        if (ret) {
+        
+        if (lora->checkPayloadIntegrity()) {
             lora->clearIrqFlags();
+            lora->receive();
             return 1;
         }
 
         lora->readData(buf, *len);
         *len = lora->getPayloadLength();
+        
         lora->clearIrqFlags();
-
-        lora->receiveContinuous();
+        lora->receive();
         return IFW_OK;
     }
 
     /** @brief Check if interface has any new data, and if so, how many
      * 
      */
-    inline uint8_t hasData() {
+    uint8_t hasData() {
         return lora->readRegister(REG_IRQ_FLAGS) & IRQ_FLAG_RX_DONE;
+    }
+
+    double getTimeOnAir(uint8_t payload_length) {
+        uint8_t spreading_factor = lora->getSpreadingFactor();
+        double symbol_time = static_cast<double>((uint16_t(1) << spreading_factor)) / lora->getBandwidth();
+        
+        int payload_symbols = 8 * payload_length;
+        payload_symbols -= 4 * spreading_factor;
+        payload_symbols += 28;
+        payload_symbols += 16 * (lora->readRegister(REG_MODEM_CONFIG_2, 2, 2) >> 2);
+        payload_symbols -= 20 * lora->readRegister(REG_MODEM_CONFIG_1, 0, 0);
+
+        if (payload_symbols < 0)
+            return ((uint16_t(lora->readRegister(REG_PREAMBLE_MSB)) << 8 | lora->readRegister(REG_PREAMBLE_LSB)) + 4.25 + 8) * symbol_time;
+
+        payload_symbols /= (4.0 * (spreading_factor - 2.0 * (lora->readRegister(REG_MODEM_CONFIG_3, 3, 3) >> 3)));
+        payload_symbols += 1; //cheap ceil
+        payload_symbols *= (lora->readRegister(REG_MODEM_CONFIG_1, 1, 3) >> 1) + 4;
+        payload_symbols += 8;
+        return ((uint16_t(lora->readRegister(REG_PREAMBLE_MSB)) << 8 | lora->readRegister(REG_PREAMBLE_LSB)) + 4.25 + payload_symbols) * symbol_time;
+    }
+
+    bool reset() {
+        lora->reset();
+        return true;
     }
 };

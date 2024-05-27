@@ -310,11 +310,7 @@ uint8_t SX127X::setCRC(bool enable) {
     if (getModemMode() != SX127X_MODEM_MODE_LORA)
         return SX127X_ERR_INVALID_MODEM_MODE;
     
-    if(enable)
-        setRegister(REG_MODEM_CONFIG_2, LORA_RX_PAYLOAD_CRC_ON, 2, 2);
-    else
-        setRegister(REG_MODEM_CONFIG_2, LORA_RX_PAYLOAD_CRC_OFF, 2, 2);
-    
+    setRegister(REG_MODEM_CONFIG_2, enable ? LORA_RX_PAYLOAD_CRC_ON : LORA_RX_PAYLOAD_CRC_OFF, 2, 2);
     return SX127X_OK;
 }
 
@@ -323,7 +319,7 @@ void SX127X::setLowDataRateOptimalization(bool force) {
         return;
 
     float ts = float(uint16_t(1) << this->sf) / this->bw;
-    if(ts >= 16.0 || force)
+    if(ts > 16.0 || force)
         setRegister(REG_MODEM_CONFIG_3, LORA_LOW_DATA_RATE_OPT_ON, 3, 3);
     else
         setRegister(REG_MODEM_CONFIG_3, LORA_LOW_DATA_RATE_OPT_OFF, 3, 3);
@@ -528,80 +524,7 @@ uint8_t SX127X::transmit(uint8_t *data, uint8_t length, bool soft) {
 }
 
 
-uint8_t SX127X::receiveBlocking(uint8_t *data, uint8_t length) {
-    receiveStart(length);
-
-    uint8_t ret = 0;
-    //calcualte timeout (us)
-    uint32_t timeout = (symbol_cnt * float(uint16_t(1) << this->sf) / this->bw) * 1000;
-    uint32_t start = micros();
-
-    //wait for successful reception or exit on timeout
-    while (!digitalRead(this->dio0)) {
-        //has dio1
-        if (this->dio1 != -1) {
-            //timeout on dio1
-            if (digitalRead(this->dio1)) {
-                ret = SX127X_ERR_RX_TIMEOUT;
-                break;
-            }
-        }
-        //no dio1
-        else {
-            //timeout from timer
-            if (micros() - start > timeout) {
-                ret = SX127X_ERR_RX_TIMEOUT;
-                break;
-            }
-        }
-    }
-
-    ret = receiveEnd();
-
-    //read data on success
-    if (!ret)
-        readData(data, length);
-
-    return ret;
-}
-
-void SX127X::receiveStart(uint8_t length) {
-    setMode(SX127X_OP_MODE_STANDBY);
-
-    //set IO mapping
-    setRegister(REG_DIO_MAPPING_1, DIO0_LORA_RX_DONE | DIO1_LORA_RX_TIMEOUT, 4, 7);
-
-    //when using SF6, payload length must be know in advance
-    if (this->sf == 6)
-        setRegister(REG_PAYLOAD_LENGTH, length);
-
-    //set FIFO pointers (all 256 bytes used for RX)
-    setRegister(REG_FIFO_RX_BASE_ADDR, 0);  //where to start storing new data
-    setRegister(REG_FIFO_ADDR_PTR, 0);      //from where to read on reception
-
-    //apply errata fixes
-    errataFix(true);
-
-    //clear interrupt flags
-    clearIrqFlags();
-
-    //start receiving
-    setMode(SX127X_OP_MODE_RXSINGLE);
-}
-
-uint8_t SX127X::receiveEnd() {
-    //go back to standby
-    setMode(SX127X_OP_MODE_STANDBY);
-
-    uint8_t ret = checkPayloadIntegrity();
-    
-    //clear IRQ flags
-    writeRegister(REG_IRQ_FLAGS, 0xFF);
-
-    return ret;
-}
-
-void SX127X::receiveContinuous(uint8_t length) {
+void SX127X::receive(uint8_t length) {
     setMode(SX127X_OP_MODE_STANDBY);
 
     //set IO mapping
@@ -632,7 +555,7 @@ uint8_t SX127X::checkPayloadIntegrity() {
     //check valid header and CRC
     if (!(irq_flags & IRQ_FLAG_VALID_HEADER))
         return SX127X_ERR_INVALID_HEADER;
-    if (getIrqFlags() & IRQ_FLAG_PAYLOAD_CRC_ERROR)
+    if (irq_flags & IRQ_FLAG_PAYLOAD_CRC_ERROR)
         return SX127X_ERR_CRC_MISMATCH;
     return SX127X_OK;
 }

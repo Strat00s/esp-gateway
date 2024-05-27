@@ -384,22 +384,22 @@ public:
 #ifndef ARDUINO
     void registerPinMode(void (*func)(uint8_t, uint8_t), uint8_t input, uint8_t output);
     void registerDigitalWrite(void (*func)(uint8_t, uint8_t), uint8_t high = 1, uint8_t low = 0);
-    inline void registerDigitalRead(int (*func)(uint8_t)) {
+    void registerDigitalRead(int (*func)(uint8_t)) {
         this->digitalRead = func;
     }
 
-    inline void registerDelay(void (*func)(unsigned long)) {
+    void registerDelay(void (*func)(unsigned long)) {
         this->delay                  = func;
     }
 
-    inline void registerMicros(unsigned long (*micros)()) {
+    void registerMicros(unsigned long (*micros)()) {
         this->micros = micros;
     }
 #endif
-    inline void registerSPIBeginTransfer(void (*func)()) {
+    void registerSPIBeginTransfer(void (*func)()) {
         this->SPIBeginTransfer              = func;
     }
-    inline void registerSPIEndTransfer(void (*func)()) {
+    void registerSPIEndTransfer(void (*func)()) {
         this->SPIEndTransfer              = func;
     }
 
@@ -412,7 +412,7 @@ public:
      * or will be filled with read data)
      * @param length Length of buffer
      */
-    inline void registerSPITransfer(void (*func)(uint8_t, uint8_t *, size_t)) {
+    void registerSPITransfer(void (*func)(uint8_t, uint8_t *, size_t)) {
         this->SPITransfer               = func;
     }
 
@@ -435,9 +435,19 @@ public:
      * 
      * @return Module version stored in register 
      */
-    inline uint8_t getVersion() {
+    uint8_t getVersion() {
         return readRegister(REG_VERSION);
     }
+
+
+    uint8_t getSpreadingFactor() {
+        return this->sf;
+    }
+
+    float getBandwidth() {
+        return this->bw;
+    }
+
 
     /** @brief Set operation mode of the module
      * 
@@ -465,7 +475,7 @@ public:
      * 
      * @return Current modem mdoe  
      */
-    inline uint8_t getModemMode() {
+    uint8_t getModemMode() {
         return readRegister(REG_OP_MODE, 7, 7);
     }
 
@@ -475,7 +485,7 @@ public:
      * @param sync_word desired sync word. Can be anything.
      * 0x12/0x1424 is default. 0x34/0x3444 is reserved for LoRaWAN.
      */
-    inline void setSyncWord(uint8_t sync_word) {
+    void setSyncWord(uint8_t sync_word) {
         writeRegister(REG_SYNC_WORD, sync_word);
     }
 
@@ -550,7 +560,7 @@ public:
      * 
      * @param length Payload length
      */
-    inline void setPayloadLength(uint8_t length) {
+    void setPayloadLength(uint8_t length) {
         writeRegister(REG_PAYLOAD_LENGTH, length);
     }
 
@@ -598,7 +608,7 @@ public:
      * @attention Hopping period (time between channel change) is then defined as Ts*frequency hopping period. Ts = symbol period
      * @param period period in ms(???) in which to change the band
      */
-    inline void setFrequencyHopping(uint8_t period) {
+    void setFrequencyHopping(uint8_t period) {
         writeRegister(REG_HOP_PERIOD, HOP_PERIOD_OFF);
     }
 
@@ -647,47 +657,18 @@ public:
      */
     uint8_t transmit(uint8_t *data, uint8_t length, bool soft = false);
 
-    //TODO finish
-    /** @brief Blocking data receive. Requires `micros` callback.
-     * 
-     * @param data Buffer to which to store the data (must be at least
-     * as long as the received data length)
-     * @param length Length of data to be received. Only used when using
-     * lowest possible spreading factor LORA_SPREADING_FACTOR_6
-     * @return 0 on succesfull reception. SX127X_ERR_RX_TIMEOUT when 
-     * reception timeout occures.
-     */
-    uint8_t receiveBlocking(uint8_t* data, uint8_t length = 0);
-
-    /** @brief Configures module to be in single receive mode and starts reception.
-     *  Can be used for basic non-blocking receive implementation. User must implement
-     *  their own interrupt routine or some other method for pins. If DIO1 pin
-     *  is not used, user must implement their own timeout routine too.
-     *  Use `receiveEnd()` for "cleanup" and payload check after timeout or RX_DONE.
-     *  Use `readData()` to read data from FIFO after successful reception.
-     * 
-     * @param length Length of data to be received. Only used when using
-     * lowest possible spreading factor LORA_SPREADING_FACTOR_6
-     */
-    void receiveStart(uint8_t length = 0);
-
-    /** @brief Cleanup helper function for "non-blocking" receive
-     * 
-     * @return 0 on success. SX127X_ERR_CRC_MISMATCH when CRC check fails.
-     */
-    uint8_t receiveEnd();
-
+    //TODO flag names
     /** @brief Continuous non-blocking receive. User must implement
-     *  their own interrupt routine (or some other method) for checking
-     *  DIO0 pin status (preferabely before calling this function).
+     *  their own interrupt or polling routine for checking DIO0 pin 
+     *  status or the IRQ register for IRQ_FLAG_RX_DONE flag: 
+     *  `readRegister(REG_IRQ_FLAGS) & IRQ_FLAG_RX_DONE`.
      *  After successful reception, user should check data integrity
-     *  by checking `PayloadCrcError` interrupt flag in register
-     *  `RegIrqFlags` (5th bit).
+     *  by checking `header` and `PayloadCrcError` flags in `RegIrqFlags`.
      * 
      * @param length 
      * @return 
      */
-    void receiveContinuous(uint8_t length = 0);
+    void receive(uint8_t length = 0);
 
     /** @brief Check that received payload has valid CRC and header
      * 
@@ -717,11 +698,11 @@ public:
     uint8_t readData(uint8_t *data, uint8_t length);
 
 
-    inline uint8_t getIrqFlags() {
+    uint8_t getIrqFlags() {
         return readRegister(REG_IRQ_FLAGS);
     }
 
-    inline void clearIrqFlags(uint8_t bits = 0xFF) {
+    void clearIrqFlags(uint8_t bits = 0xFF) {
         writeRegister(REG_IRQ_FLAGS, bits);
     }
 
@@ -735,7 +716,7 @@ public:
     void SPIMakeTransaction(uint8_t addr, uint8_t *data, size_t length = 1);
     
     /** @brief Read single register from the module. If only specific
-     * range change is required, use mask_xsb arguments to specify
+     * range is required, use mask_xsb arguments to specify
      * a mask of bits which will be kept from the register
      * 
      * @param addr Register address to be read from

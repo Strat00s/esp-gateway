@@ -34,12 +34,8 @@
 #define TMM_PACKET_REQUEST      0b00001000
 #define TMM_PACKET_RESPONSE     0b00010000
 
-#define TOA 50 //time on air
-
 //TODO change timeout acording to network size (max PING)
     //TODO scan network
-//TODO fix initial TTS of a packet (currently starts at TOA)
-//TODO change TOA to be requested from interface
 
 //TODO return 16bit from loop as flags
 //TODO rework return values in general
@@ -48,6 +44,7 @@ template<size_t DATA_LEN>
 struct packet_tts_t {
     TMPacket<DATA_LEN> packet;
     unsigned long tts;
+    bool discard = false;
 };
 
 
@@ -64,6 +61,7 @@ private:
     StaticDeque<packet_tts_t<DATA_LEN>, Q_SIZE> send_queue;
     TMPacket<DATA_LEN> *last_request;
     unsigned long last_loop_time = 0;
+    unsigned long wait_for_med = 0;
 
     TMPacketID pid_list[PID_SIZE];
     size_t pid_index = 0;
@@ -144,8 +142,8 @@ private:
      * False if packet is a duplicate. 
      */
     bool savePacketID(TMPacket<DATA_LEN> *packet) {
+        printf("SAVE PACKET\n");
         for (uint8_t i = 0; i < PID_SIZE; i++) {
-            
             //pid exists
             if (pid_list[i].getSource() == packet->getSource() &&
                 pid_list[i].getSequence() == packet->getSequence() &&
@@ -154,15 +152,18 @@ private:
                 //update pid
                 if (pid_list[i].getRepeatCount() < packet->getRepeatCount()) {
                     setPacketID(&pid_list[i], packet);
+                    printf("UPDATE: %d-%d:%d | %d-%d:%d\n", pid_list[i].getSource(), pid_list[i].getDestination(), pid_list[i].getSequence(), packet->getSource(), packet->getDestination(), packet->getSequence());
                     return true;
                 }
                 // duplicate
+                printf("DUPLICATE: %d-%d:%d | %d-%d:%d\n", pid_list[i].getSource(), pid_list[i].getDestination(), pid_list[i].getSequence(), packet->getSource(), packet->getDestination(), packet->getSequence());
                 return false;
             }
         }
 
         //add new pid
         setPacketID(&pid_list[pid_index], packet);
+        printf("NEW: %d-%d:%d | %d-%d:%d\n", pid_list[pid_index].getSource(), pid_list[pid_index].getDestination(), pid_list[pid_index].getSequence(), packet->getSource(), packet->getDestination(), packet->getSequence());
         pid_index = (pid_index + 1) % PID_SIZE;
         return true;
     }
@@ -226,7 +227,9 @@ private:
 
 
 public:
-    TinyMeshManager(InterfaceWrapperBase *interface = nullptr) {
+    unsigned long toa = 0;
+
+    TinyMeshManager(InterfaceWrapperBase *interface) {
         this->interface = interface;
     }
     TinyMeshManager(uint8_t address, InterfaceWrapperBase *interface) : TinyMeshManager(interface) {
@@ -299,10 +302,12 @@ public:
             send_queue.popBack();
             return TMM_ERR_BUILD_PACKET;
         }
-        request->tts = TOA;
+        request->tts = toa + millis() - last_loop_time;
+        savePacketID(&request->packet);
         return TMM_OK;
     }
 
+    //TODO proper return values for everything
     /** @brief Main loop responsible for reading and handling incoming packets and sending queued packets.
      * 
      * @return What occured during the loop. Aditional information can be retrieved by getStatus().
@@ -318,12 +323,18 @@ public:
      * @param TMM_ERR_NULL if interface is null
      */
     uint8_t loop() {
+        unsigned long loop_time = millis() - last_loop_time;
+        last_loop_time = millis();
+
+        if (toa == 0)
+            toa = (this->interface->getTimeOnAir(TM_HEADER_LENGTH + DATA_LEN) + 1) * 1.2; //ceiling
+
         uint8_t ret = TMM_OK;
         last_ret = receivePacket();
 
         // return if there was an error while processing possible incoming packet
         if (last_ret == TMM_ERR_GET_DATA || last_ret == TMM_ERR_CHECK_HEADER)
-            return ret | TMM_ERR_RECEIVE;
+            return ret | TMM_ERR_RECEIVE; //TODO continue on reception error
 
         // got some data
         if (!last_ret) {
@@ -353,26 +364,25 @@ public:
                     if (send_queue.full())
                         ret |= TMM_ERR_FORWARD;
                     else {
-                        send_queue.pushBack({packet, TOA + (address * TOA) % TOA});
+                        send_queue.pushBack({packet, loop_time + toa + (address * toa) % toa, true});
                         ret |= TMM_FORWARD;
                     }
                 }
             }
         }
 
-        //TODO queue packets as before
-        //just push them to back
-        //but now, every newly added packet has to be scheduled at least time-on-air ms away from next transmission
-
         if (send_queue.empty())
             return (ret & 0xF0) | TMM_QUEUE_EMPTY;
 
         //medium is busy
-        if (interface->isMediumBusy())
+        if (interface->isMediumBusy()) {
+            wait_for_med = millis();
+            return ret | TMM_MEDIUM_BUSY;
+        }
+
+        if (millis() - wait_for_med <= toa)
             return ret | TMM_MEDIUM_BUSY;
 
-        auto time_passed = millis() - last_loop_time;
-        last_loop_time = millis();
         bool sent = false;
         bool skip = false;
         for (size_t i = 0; i < send_queue.size(); i++) {
@@ -381,34 +391,38 @@ public:
             if (next->packet.empty())
                 continue;
 
-            if (next->packet.getRepeatCount() == 3) {
+            //TODO replace discard with bit field and allow one more resend
+            if (!next->discard && next->packet.getRepeatCount() == 3) {
                 next->packet.clear();
-                printf("TIMEOUT\n");
+                printf("TIMEOUT\n"); //TODO proper exit
                 ret |= TMM_ERR_TIMEOUT;
             }
 
             //update packet timer
-            if (next->tts > time_passed) {
-                next->tts -= time_passed;
+            if (next->tts > loop_time) {
+                next->tts -= loop_time;
                 continue;
             }
 
+            //only one packet is sent per loop per TOA
             if (sent) {
-                if (next->tts < TOA)
-                    next->tts = TOA;
+                if (next->tts < toa)
+                    next->tts = toa;
                 continue;
             }
 
             //send the packet
             last_ret = interface->sendData(next->packet.raw, next->packet.size());
             if (last_ret) {
+                //TODO get to the error
+                //TODO change how skip works
                 skip = true;
                 continue;
             }
 
             sent = true;
 
-            if (next->packet.isResponse()) {
+            if (next->packet.isResponse() || next->discard) {
                 next->packet.clear();
                 continue;
             }
@@ -416,7 +430,6 @@ public:
             next->packet.setRepeatCount(next->packet.getRepeatCount() + 1);
             next->tts = 1000;
         }
-
 
         while (!send_queue.empty() && send_queue.first()->packet.empty())
             send_queue.popFront();

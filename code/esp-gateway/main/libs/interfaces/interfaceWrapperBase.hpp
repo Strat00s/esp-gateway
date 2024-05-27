@@ -73,4 +73,8 @@ public:
      * @return Number of received data (packets).
      */
     virtual uint8_t hasData() = 0;
+
+    virtual double getTimeOnAir(uint8_t payload_length) = 0;
+
+    virtual bool reset() = 0;
 };

@@ -93,7 +93,7 @@
 #define SD_CS   GPIO_NUM_10
 
 
-#define DATA_LEN 249
+#define DATA_LEN 16
 #define PAYLOAD_OUT "PING"
 #define PAYLOAD_IN  "PONG"
 bool answer = false;
@@ -174,7 +174,6 @@ void SPITransfer(uint8_t addr, uint8_t *buffer, size_t length) {
         ESP_LOGE(TAG, "Error: %d", ret);
     return;
 }
-
 unsigned long millis() {
     return esp_timer_get_time() / 1000;
 }
@@ -358,13 +357,20 @@ extern "C" void app_main() {
     uint8_t last_ret = 256;
     uint8_t ret = 0;
     answer = true;
+    unsigned long alive = 0;
     while(true) {
-        if (answer && millis() - timer > 2000) {
+        if (answer && millis() - timer > 7000) {
             answer = false;
             timer = millis();
             uint8_t data[] = PAYLOAD_OUT;
             ret = tmm.queuePacket(1, TM_MSG_CUSTOM, data, 5);
             printf("Queued 1 packet: %d\n", ret);
+        }
+
+        if (millis() - alive > 5000) {
+            alive = millis();
+            printf("ALIVE\n");
+            printf("Time on air: %ld\n", tmm.toa);
         }
 
         ret = tmm.loop();
