@@ -27,9 +27,9 @@
             0001 = ERR
             0010 = PING - check if node is in the network. Contains hop counter
             0011 - 1111 = CUSTOM - user defined
-        1:  IS RESPONSE
-            0 = FALSE - request
-            1 = TRUE - response
+        1:  WAS FORWARDED
+            0 = FALSE
+            1 = TRUE
         0: DEVICE TYPE
             0 = NODE
             1 = LP_NODE
@@ -49,8 +49,8 @@
 //Flag bit locations
 #define TM_NODE_TYPE_LSB 0
 #define TM_NODE_TYPE_MSB 0
-#define TM_IS_RESP_LSB   1
-#define TM_IS_RESP_MSB   1
+#define TM_IS_FWD_LSB    1
+#define TM_IS_FWD_MSB    1
 #define TM_MSG_TYPE_LSB  2
 #define TM_MSG_TYPE_MSB  5
 #define TM_RPT_CNT_LSB   6
@@ -146,7 +146,10 @@ public:
         if (msg_type > 15)
             msg_type = 15;
         setBits(&raw[TM_FLAGS_POS], msg_type, TM_MSG_TYPE_MSB, TM_MSG_TYPE_LSB);
-        setBits(&raw[TM_FLAGS_POS], (msg_type == TM_MSG_OK || msg_type == TM_MSG_ERR), TM_IS_RESP_MSB, TM_IS_RESP_LSB);
+    }
+
+    void setIsForwarded(bool is_forwarded) {
+        setBits(&raw[TM_FLAGS_POS], is_forwarded, TM_IS_FWD_MSB, TM_IS_FWD_LSB);
     }
 
 
@@ -211,7 +214,12 @@ public:
     }
 
     bool isResponse() {
-        return getBits(raw[TM_FLAGS_POS], TM_IS_RESP_MSB, TM_IS_RESP_LSB);
+        uint8_t msg_type = getBits(raw[TM_FLAGS_POS], TM_MSG_TYPE_MSB, TM_MSG_TYPE_LSB);
+        return msg_type == TM_MSG_OK || msg_type == TM_MSG_ERR;
+    }
+
+    bool isForwarded() {
+        return getBits(raw[TM_FLAGS_POS], TM_IS_FWD_MSB, TM_IS_FWD_LSB);
     }
 
     uint8_t getFlags() {
@@ -302,6 +310,7 @@ public:
         setFlags(repeat_cnt << 6 | node_type);
         setMessageType(message_type);
         setDataLength(length);
+        setIsForwarded(false);
 
         // check if header is valid
         ret = checkHeader();

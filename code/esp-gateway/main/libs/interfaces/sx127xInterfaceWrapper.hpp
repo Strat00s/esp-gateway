@@ -92,7 +92,7 @@ public:
      * 
      */
     uint8_t hasData() {
-        return lora->readRegister(REG_IRQ_FLAGS) & IRQ_FLAG_RX_DONE;
+        return lora->readRegister(REG_IRQ_FLAGS) & IRQ_FLAG_RX_DONE ? 1 : 0;
     }
 
     double getTimeOnAir(uint8_t payload_length) {

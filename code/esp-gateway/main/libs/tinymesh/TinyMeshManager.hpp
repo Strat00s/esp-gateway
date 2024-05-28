@@ -6,45 +6,44 @@
 
 #define TMM_OK                0
 
-#define TMM_NO_DATA           1
-
 #define TMM_ERR_BUILD_PACKET  2
 #define TMM_ERR_QUEUE_FULL    3
-#define TMM_ERR_GET_DATA      4
-#define TMM_ERR_CHECK_HEADER  5
-#define TMM_ERR_RECEIVE       6
-#define TMM_ERR_TIMEOUT       7
-#define TMM_ERR_SEND_DATA     8
-#define TMM_ERR_NULL          9
 
-#define TMM_PACKET_DUPLICATE  10
-#define TMM_QUEUE_EMPTY       11
-#define TMM_SENT              12
-#define TMM_AWAIT             13
+//loop return flags
+#define TMM_RECV_NO_DATA        0b0000000000000001
+#define TMM_ERR_RECV_HEADER     0b0000000000000010
+#define TMM_ERR_RECV_GET_DATA   0b0000000000000100
+#define TMM_SEND_QUEUE_EMPTY    0b0000000000001000
+#define TMM_RECV_REQUEST        0b0000000000010000
+#define TMM_RECV_RESPONSE       0b0000000000100000
+#define TMM_RECV_RND_RESPONSE   0b0000000001000000
+#define TMM_RECV_FORWARD        0b0000000010000000
+#define TMM_MEDIUM_BUSY         0b0000000100000000
+#define TMM_SENT                0b0000001000000000
+#define TMM_SEND_QUEUED         0b0000010000000000
+#define TMM_SEND_TIMEOUT        0b0000100000000000
+#define TMM_ERR_SEND_DATA       0b0001000000000000
+#define TMM_ERR_HANDLE_REQUEST  0b0010000000000000
+#define TMM_ERR_HANDLE_RESPONSE 0b0100000000000000
+#define TMM_ERR_FWD_QUEUE_FULL  0b1000000000000000
 
-#define TMM_MEDIUM_BUSY       14
+#define TIMEOUT 1000
 
-#define TMM_REQUEST       0b00010000
-#define TMM_RESPONSE      0b00100000
-#define TMM_FORWARD       0b01000000
-#define TMM_ERR_FORWARD   0b10000000
-
-#define TMM_PACKET_RND_RESPONSE 0b00000010
-#define TMM_PACKET_FORWARD      0b00000100
-#define TMM_PACKET_REQUEST      0b00001000
-#define TMM_PACKET_RESPONSE     0b00010000
 
 //TODO change timeout acording to network size (max PING)
     //TODO scan network
 
-//TODO return 16bit from loop as flags
-//TODO rework return values in general
+
+//TODO respons to repeated packet should just update repeat counter
+//TODO clear forwarded packets to which we just got answer
+//now they are full new packets
+
+
 
 template<size_t DATA_LEN>
 struct packet_tts_t {
     TMPacket<DATA_LEN> packet;
     unsigned long tts;
-    bool discard = false;
 };
 
 
@@ -58,8 +57,8 @@ private:
     uint8_t sequence_num = 0;
 
     TMPacket<DATA_LEN> packet; //incoming packet
+    TMPacket<DATA_LEN> *request;
     StaticDeque<packet_tts_t<DATA_LEN>, Q_SIZE> send_queue;
-    TMPacket<DATA_LEN> *last_request;
     unsigned long last_loop_time = 0;
     unsigned long wait_for_med = 0;
 
@@ -77,6 +76,7 @@ private:
      * @param fwd If the packet is to be forwarded (don't send a response).
      * 
      * @return 0 on success.
+     * 1 on failure.
      */
     uint8_t (*requestHandler)(TMPacket<DATA_LEN> *request, bool fwd);
 
@@ -86,20 +86,24 @@ private:
      * @param response The response packet.
      * 
      * @return 0 on success.
+     * 1 on failure.
      */
     uint8_t (*responseHandler)(TMPacket<DATA_LEN> *request, TMPacket<DATA_LEN> *response);
 
-    /** @brief Check if a packet is a response to any queued packet
+
+    /** @brief Check if a packet is a response to any queued packet and save its reference.
      * 
      * @param response Received packet
-     * @return True if response packet is a response to the request packet.
+     * @return True if response packet is a response to some currently stored packet.
      */
     bool isResponse(TMPacket<DATA_LEN> *response) {
         for (size_t i = 0; i < send_queue.size(); i++) {
             if (!send_queue[i].packet.isResponse() &&
-                response->getSource() == send_queue[i].packet.getDestination() &&
-                response->getDestination() == send_queue[i].packet.getSource()) {
-                last_request = &send_queue[i].packet;
+                //response->getDestination() == address &&
+                response->getDestination() == send_queue[i].packet.getSource() &&
+                response->getSource() == send_queue[i].packet.getDestination()) {
+
+                request = &send_queue[i].packet;
                 return true;
             }
         }
@@ -117,7 +121,6 @@ private:
         pid.setSource(packet->getSource());
         pid.setDestination(packet->getDestination());
         pid.setSequence(packet->getSequence());
-        //pid.setFlags(packet->getFlags());
         pid.setRepeatCount(packet->getRepeatCount());
         return pid;
     }
@@ -131,18 +134,18 @@ private:
         pid->setSource(packet->getSource());
         pid->setDestination(packet->getDestination());
         pid->setSequence(packet->getSequence());
-        //pid->setFlags(packet->getFlags());
         pid->setRepeatCount(packet->getRepeatCount());
     }
 
     /** @brief Save ID of a packet to pid_list.
      * 
      * @param packet 
-     * @return True on success.
-     * False if packet is a duplicate. 
+     * @return 0 on new packet.
+     * 1 on updated packet.
+     * 2 if duplicate. 
      */
-    bool savePacketID(TMPacket<DATA_LEN> *packet) {
-        printf("SAVE PACKET\n");
+    uint8_t savePacketID(TMPacket<DATA_LEN> *packet) {
+        printf("Saving ID: ");
         for (uint8_t i = 0; i < PID_SIZE; i++) {
             //pid exists
             if (pid_list[i].getSource() == packet->getSource() &&
@@ -152,51 +155,77 @@ private:
                 //update pid
                 if (pid_list[i].getRepeatCount() < packet->getRepeatCount()) {
                     setPacketID(&pid_list[i], packet);
-                    printf("UPDATE: %d-%d:%d | %d-%d:%d\n", pid_list[i].getSource(), pid_list[i].getDestination(), pid_list[i].getSequence(), packet->getSource(), packet->getDestination(), packet->getSequence());
-                    return true;
+                    printf("UPDATE: %03d-%03d:%03d | %03d-%03d:%03d\n", pid_list[i].getSource(), pid_list[i].getDestination(), pid_list[i].getSequence(), packet->getSource(), packet->getDestination(), packet->getSequence());
+                    return 1;
                 }
                 // duplicate
-                printf("DUPLICATE: %d-%d:%d | %d-%d:%d\n", pid_list[i].getSource(), pid_list[i].getDestination(), pid_list[i].getSequence(), packet->getSource(), packet->getDestination(), packet->getSequence());
-                return false;
+                printf("DUPLICATE: %03d-%03d:%03d | %03d-%03d:%03d\n", pid_list[i].getSource(), pid_list[i].getDestination(), pid_list[i].getSequence(), packet->getSource(), packet->getDestination(), packet->getSequence());
+                return 2;
             }
         }
 
         //add new pid
         setPacketID(&pid_list[pid_index], packet);
-        printf("NEW: %d-%d:%d | %d-%d:%d\n", pid_list[pid_index].getSource(), pid_list[pid_index].getDestination(), pid_list[pid_index].getSequence(), packet->getSource(), packet->getDestination(), packet->getSequence());
+        printf("NEW: %03d-%03d:%03d | %03d-%03d:%03d\n", pid_list[pid_index].getSource(), pid_list[pid_index].getDestination(), pid_list[pid_index].getSequence(), packet->getSource(), packet->getDestination(), packet->getSequence());
         pid_index = (pid_index + 1) % PID_SIZE;
-        return true;
+        return 0;
     }
 
 
     /** @brief Classify packet if it is a response, requiest, to be forwarded and so on.
      * 
-     * @return TMM_PACKET_ macros. 
+     * @return Combinations of: `TMM_RECV_RESPONSE`, `TMM_RECV_RND_RESPONSE`, `TMM_RECV_FORWARD`, `TMM_RECV_REQUEST`.
      */
     uint8_t classifyPacket() {
+        printf("Packet is a ");
         // response
         if (packet.isResponse()) {
-            if (isResponse(&packet))
-                return TMM_PACKET_RESPONSE;
+            //packet is response to something we have in queue
+            if (isResponse(&packet)) {
+                //a response to some elses packet -> remove request and forward this response
+                if (request->isForwarded()) {
+                    request->clear();
+                    printf("RESPONSE to other packet -> FORWARD\n");
+                    return TMM_RECV_FORWARD;
+                }
 
-            if (packet.getDestination() == address)
-                return TMM_PACKET_RND_RESPONSE;
+                //response to us
+                if (packet.getDestination() == address) {
+                    printf("RESPONSE\n");
+                    return TMM_RECV_RESPONSE;
+                }
 
-            return TMM_PACKET_FORWARD;
+                printf("--------------------------NOT RESPONSE NOR FORWARD--------------------------\n");
+            }
+
+            //response to us, but we have no request
+            if (packet.getDestination() == address) {
+                printf("RANDOM RESPONSE\n");
+                return TMM_RECV_RND_RESPONSE;
+            }
+
+            printf("FORWARD\n");
+            return TMM_RECV_FORWARD;
         }
 
         // request
-        if (packet.getDestination() == address)
-            return TMM_PACKET_REQUEST;
+        if (packet.getDestination() == address) {
+            printf("REQUEST\n");
+            return TMM_RECV_REQUEST;
+        }
 
-        if (packet.getDestination() == TM_BROADCAST_ADDRESS)
-            return TMM_PACKET_REQUEST | TMM_PACKET_FORWARD;
+        if (packet.getDestination() == TM_BROADCAST_ADDRESS) {
+            printf("FORWARD REQUEST\n");
+            return TMM_RECV_REQUEST | TMM_RECV_FORWARD;
+        }
 
-        return TMM_PACKET_FORWARD;
+        printf("FORWARD\n");
+        return TMM_RECV_FORWARD;
     }
 
 
     uint8_t handleRequest(TMPacket<DATA_LEN> *request, bool fwd) {
+        printf("Handling request packet\n");
         if (request->getMessageType() == TM_MSG_PING) {
             if (fwd)
                 return TMM_OK;
@@ -211,20 +240,34 @@ private:
     /** @brief Handle incoming packets*/
     uint8_t receivePacket() {
         if (!interface->hasData())
-            return TMM_NO_DATA;
+            return TMM_RECV_NO_DATA;
 
         uint8_t len = TM_HEADER_LENGTH + DATA_LEN;
         last_ret = interface->getData(packet.raw, &len);
         if (last_ret)
-            return TMM_ERR_GET_DATA;
+            return TMM_ERR_RECV_GET_DATA;
 
         last_ret = packet.checkHeader();
         if (last_ret)
-            return TMM_ERR_CHECK_HEADER;
+            return TMM_ERR_RECV_HEADER;
+
+        printf("Got new packet: ");
+        printPacketSimple(&packet);
 
         return TMM_OK;
     }
 
+
+    void printPacketSimple(TMPacket<DATA_LEN> *packet) {
+        printf("%3d %3d %3d ", packet->getSource(), packet->getDestination(), packet->getSequence());
+        if (packet->getMessageType() == TM_MSG_OK)
+            printf(" OK ");
+        else if (packet->getMessageType() == TM_MSG_ERR)
+            printf(" ER ");
+        else 
+            printf(" XX ");
+        printf("%d\n", packet->getRepeatCount());
+    }
 
 public:
     unsigned long toa = 0;
@@ -289,7 +332,9 @@ public:
      * @param message_type Message type.
      * @param data Data to send.
      * @param length Length of the data.
-     * @return TMM_OK on success.
+     * @return `TMM_OK` on success.
+     * `TMM_ERR_QUEUE_FULL` if queue is full.
+     * `TMM_ERR_BUILD_PACKET` if failed to build a packet
      */
     uint8_t queuePacket(uint8_t destination, uint8_t message_type, uint8_t *data = nullptr, uint8_t length = 0) {
         if (send_queue.reserve())
@@ -302,109 +347,114 @@ public:
             send_queue.popBack();
             return TMM_ERR_BUILD_PACKET;
         }
-        request->tts = toa + millis() - last_loop_time;
+        request->tts = 0;//toa + (millis() - last_loop_time);
         savePacketID(&request->packet);
+        printf("Queued packet in %ld\n", request->tts);
         return TMM_OK;
     }
 
     //TODO proper return values for everything
     /** @brief Main loop responsible for reading and handling incoming packets and sending queued packets.
      * 
-     * @return What occured during the loop. Aditional information can be retrieved by getStatus().
-     * @param TMM_ERR_RECEIVE
-     * @param TMM_QUEUE_EMPTY
-     * @param TMM_ERR_TIMEOUT
-     * @param TMM_ERR_SEND_DATA
-     * @param TMM_SENT
-     * @param TMM_AWAIT
-     * @param TMM_REQUEST
-     * @param TMM_RESPONSE
-     * @param TMM_FORWARD
-     * @param TMM_ERR_NULL if interface is null
+     * @return Returns any of the following macros: `TMM_RECV_NO_DATA`, `TMM_ERR_RECV_HEADER`, `TMM_ERR_RECV_GET_DATA`,
+     * `TMM_SEND_QUEUE_EMPTY`, `TMM_RECV_REQUEST`, `TMM_RECV_RESPONSE`, `TMM_RECV_RND_RESPONSE`,
+     * `TMM_RECV_FORWARD`, `TMM_MEDIUM_BUSY`, `TMM_SENT`, `TMM_SEND_QUEUED`, `TMM_SEND_TIMEOUT`, `TMM_ERR_SEND_DATA`.
      */
-    uint8_t loop() {
+    uint16_t loop() {
+        //save current loop time
         unsigned long loop_time = millis() - last_loop_time;
         last_loop_time = millis();
 
-        if (toa == 0)
+        //update time on air for the first time
+        if (toa == 0) {
             toa = (this->interface->getTimeOnAir(TM_HEADER_LENGTH + DATA_LEN) + 1) * 1.2; //ceiling
+            printf("TOA updated: %ld\n", toa);
+        }
 
-        uint8_t ret = TMM_OK;
-        last_ret = receivePacket();
+        uint16_t ret = receivePacket();
 
-        // return if there was an error while processing possible incoming packet
-        if (last_ret == TMM_ERR_GET_DATA || last_ret == TMM_ERR_CHECK_HEADER)
-            return ret | TMM_ERR_RECEIVE; //TODO continue on reception error
+        //got some data
+        if (!ret) {
+            uint8_t packet_type = classifyPacket();
+            ret |= packet_type;
 
-        // got some data
-        if (!last_ret) {
-            last_ret = classifyPacket();
-
-            // not a duplicate packet
-            if (savePacketID(&packet)) {
+            uint8_t pid_type = savePacketID(&packet);
+            //not a duplicate packet
+            if (pid_type != 2) {
                 //increase ping
                 if (packet.getMessageType() == TM_MSG_PING)
                     packet.getData()[0]++;
 
                 //handle request
-                if (last_ret & TMM_PACKET_REQUEST) {
-                    last_ret = handleRequest(&packet, last_ret & TMM_PACKET_FORWARD);
-                    ret |= TMM_REQUEST;
+                //error only if: request AND new packet AND failed to handle request)
+                if (packet_type & TMM_RECV_REQUEST) {
+                    if (!pid_type) {
+                        if (handleRequest(&packet, packet_type & TMM_RECV_FORWARD))
+                            ret |= TMM_ERR_HANDLE_REQUEST;
+                    }
+                    //else
+                        //TODO resend answer only
                 }
 
                 //handle response
-                if (last_ret & TMM_PACKET_RESPONSE) {
-                    last_ret = responseHandler(last_request, &packet);
-                    last_request->clear();
-                    ret |= TMM_RESPONSE;
+                if (packet_type & TMM_RECV_RESPONSE && !pid_type) {
+                    printf("Handling response packet\n");
+                    if (responseHandler(request, &packet))
+                        ret |= TMM_ERR_HANDLE_RESPONSE;
+                    request->clear();
                 }
 
                 //forward packet
-                if (last_ret & TMM_PACKET_FORWARD) {
+                if (packet_type & TMM_RECV_FORWARD) {
+                    printf("Handling forward packet\n");
                     if (send_queue.full())
-                        ret |= TMM_ERR_FORWARD;
+                        ret |= TMM_ERR_FWD_QUEUE_FULL;
                     else {
-                        send_queue.pushBack({packet, loop_time + toa + (address * toa) % toa, true});
-                        ret |= TMM_FORWARD;
+                        printf("Queued packet in %ld\n", loop_time + toa + (address % toa));
+                        packet.setIsForwarded(true);
+                        send_queue.pushBack({packet, loop_time + toa});
                     }
                 }
             }
         }
 
+        //nothing to do with empty queue
         if (send_queue.empty())
-            return (ret & 0xF0) | TMM_QUEUE_EMPTY;
+            return ret | TMM_SEND_QUEUE_EMPTY;
 
         //medium is busy
         if (interface->isMediumBusy()) {
             wait_for_med = millis();
             return ret | TMM_MEDIUM_BUSY;
         }
-
         if (millis() - wait_for_med <= toa)
             return ret | TMM_MEDIUM_BUSY;
 
         bool sent = false;
         bool skip = false;
+        //go through the queueu
         for (size_t i = 0; i < send_queue.size(); i++) {
             packet_tts_t<DATA_LEN> *next = &send_queue[i];
         
+            //skip empty packets
             if (next->packet.empty())
                 continue;
 
-            //TODO replace discard with bit field and allow one more resend
-            if (!next->discard && next->packet.getRepeatCount() == 3) {
+            //clear timeouted packets
+            if (!next->packet.isForwarded() && next->packet.getRepeatCount() == 3) {
                 next->packet.clear();
-                printf("TIMEOUT\n"); //TODO proper exit
-                ret |= TMM_ERR_TIMEOUT;
+                printf("Packet TIMEOUT\n");
+                ret |= TMM_SEND_TIMEOUT;
             }
 
             //update packet timer
             if (next->tts > loop_time) {
                 next->tts -= loop_time;
+                ret |= TMM_SEND_QUEUED;
                 continue;
             }
 
-            //only one packet is sent per loop per TOA
+            //only one packet is sent per TOA
             if (sent) {
                 if (next->tts < toa)
                     next->tts = toa;
@@ -412,37 +462,33 @@ public:
             }
 
             //send the packet
-            last_ret = interface->sendData(next->packet.raw, next->packet.size());
-            if (last_ret) {
-                //TODO get to the error
-                //TODO change how skip works
-                skip = true;
+            if (interface->sendData(next->packet.raw, next->packet.size())) {
+                ret |= TMM_ERR_SEND_DATA;
+                printf("Failed to send packet\n");
                 continue;
             }
-
             sent = true;
+            ret |= TMM_SENT;
+            printf("Packet %03d-%03d:%03d was sent\n", next->packet.getSource(), next->packet.getDestination(), next->packet.getSequence());
 
-            if (next->packet.isResponse() || next->discard) {
+            //clear responses or forwared packets as they are to be sent only once
+            if (next->packet.isResponse() || next->packet.isForwarded()) {
                 next->packet.clear();
+                printf("Removed forward and responses\n");
                 continue;
             }
-            
+
+            //increase repeat count and update time to send
             next->packet.setRepeatCount(next->packet.getRepeatCount() + 1);
-            next->tts = 1000;
+            next->tts = TIMEOUT;
         }
 
+        //remove stale packets from queue
         while (!send_queue.empty() && send_queue.first()->packet.empty())
             send_queue.popFront();
-
         while (!send_queue.empty() && send_queue.last()->packet.empty())
             send_queue.popBack();
 
-        if (skip)
-            return (ret & 0xF0) | TMM_ERR_SEND_DATA;
-
-        if (!sent)
-            return (ret & 0xF0) | TMM_AWAIT;
-
-        return ret | TMM_SENT;
+        return ret;
     }
 };

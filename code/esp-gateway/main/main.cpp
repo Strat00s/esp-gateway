@@ -204,6 +204,53 @@ void printPacket(TMPacket<DATA_LEN> *packet) {
     printf("\n");
 }
 
+void printPacketSimple(TMPacket<DATA_LEN> *packet) {
+    printf("%3d %3d %3d ", packet->getSource(), packet->getDestination(), packet->getSequence());
+    if (packet->getMessageType() == TM_MSG_OK)
+        printf(" OK ");
+    else if (packet->getMessageType() == TM_MSG_ERR)
+        printf(" ER ");
+    else 
+        printf(" XX ");
+    printf("%d\n", packet->getRepeatCount());
+}
+
+void printLoop(uint16_t loop_ret) {
+    if (loop_ret & TMM_RECV_NO_DATA)
+        printf("TMM_RECV_NO_DATA | ");
+    if (loop_ret & TMM_ERR_RECV_HEADER)
+        printf("TMM_ERR_RECV_HEADER | ");
+    if (loop_ret & TMM_ERR_RECV_GET_DATA)
+        printf("TMM_ERR_RECV_GET_DATA | ");
+    if (loop_ret & TMM_SEND_QUEUE_EMPTY)
+        printf("TMM_SEND_QUEUE_EMPTY | ");
+    if (loop_ret & TMM_RECV_REQUEST)
+        printf("TMM_RECV_REQUEST | ");
+    if (loop_ret & TMM_RECV_RESPONSE)
+        printf("TMM_RECV_RESPONSE | ");
+    if (loop_ret & TMM_RECV_RND_RESPONSE)
+        printf("TMM_RECV_RND_RESPONSE | ");
+    if (loop_ret & TMM_RECV_FORWARD)
+        printf("TMM_RECV_FORWARD | ");
+    if (loop_ret & TMM_MEDIUM_BUSY)
+        printf("TMM_MEDIUM_BUSY | ");
+    if (loop_ret & TMM_SENT)
+        printf("TMM_SENT | ");
+    if (loop_ret & TMM_SEND_QUEUED)
+        printf("TMM_SEND_QUEUED | ");
+    if (loop_ret & TMM_SEND_TIMEOUT)
+        printf("TMM_SEND_TIMEOUT | ");
+    if (loop_ret & TMM_ERR_SEND_DATA)
+        printf("TMM_ERR_SEND_DATA | ");
+    if (loop_ret & TMM_ERR_HANDLE_REQUEST)
+        printf("TMM_ERR_HANDLE_REQUEST | ");
+    if (loop_ret & TMM_ERR_HANDLE_RESPONSE)
+        printf("TMM_ERR_HANDLE_RESPONSE | ");
+    if (loop_ret & TMM_ERR_FWD_QUEUE_FULL)
+        printf("TMM_ERR_FWD_QUEUE_FULL | ");
+    printf("\n");
+}
+
 
 /*----(INITIALIZATION)----*/
 void gpioInit() {
@@ -354,8 +401,8 @@ extern "C" void app_main() {
 
 
     /*----(MAIN LOOP)----*/
-    uint8_t last_ret = 256;
-    uint8_t ret = 0;
+    uint16_t last_ret = 0;
+    uint16_t ret = 0;
     answer = true;
     unsigned long alive = 0;
     while(true) {
@@ -364,7 +411,7 @@ extern "C" void app_main() {
             timer = millis();
             uint8_t data[] = PAYLOAD_OUT;
             ret = tmm.queuePacket(1, TM_MSG_CUSTOM, data, 5);
-            printf("Queued 1 packet: %d\n", ret);
+            //printf("Queued 1 packet: %d\n", ret);
         }
 
         if (millis() - alive > 5000) {
@@ -374,10 +421,14 @@ extern "C" void app_main() {
         }
 
         ret = tmm.loop();
-        if (ret != last_ret) {
-            last_ret = ret;
-            printf("Loop: %d\n", ret);
-            printf("Queue size: %d\n", tmm.queueSize());
-        }
+        //if (ret != last_ret) {
+        //    last_ret = ret;
+        //    printf("Loop: ");
+        //    printLoop(ret);
+        //    printf("Loop: ");
+        //    printBinary(ret, 16);
+        //    printf("\n");
+        //    printf("Queue size: %d\n", tmm.queueSize());
+        //}
     }
 }
