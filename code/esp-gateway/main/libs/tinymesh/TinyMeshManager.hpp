@@ -27,6 +27,10 @@
 #define TMM_ERR_HANDLE_RESPONSE 0b0100000000000000
 #define TMM_ERR_FWD_QUEUE_FULL  0b1000000000000000
 
+#define TMM_PID_NEW       0
+#define TMM_PID_UPDATE    1
+#define TMM_PID_DUPLICATE 2
+
 #define TIMEOUT 1000
 
 
@@ -59,13 +63,12 @@ private:
     TMPacket<DATA_LEN> packet; //incoming packet
     TMPacket<DATA_LEN> *request;
     StaticDeque<packet_tts_t<DATA_LEN>, Q_SIZE> send_queue;
-    unsigned long last_loop_time = 0;
-    unsigned long wait_for_med = 0;
+    unsigned long loop_timer = 0;
+    uint16_t busy_timeout = 0;
+    uint16_t toa = 0;
 
     TMPacketID pid_list[PID_SIZE];
     size_t pid_index = 0;
-
-    uint8_t last_ret;
 
 
     unsigned long (*millis)();
@@ -91,52 +94,6 @@ private:
     uint8_t (*responseHandler)(TMPacket<DATA_LEN> *request, TMPacket<DATA_LEN> *response);
 
 
-    /** @brief Check if a packet is a response to any queued packet and save its reference.
-     * 
-     * @param response Received packet
-     * @return True if response packet is a response to some currently stored packet.
-     */
-    bool isResponse(TMPacket<DATA_LEN> *response) {
-        for (size_t i = 0; i < send_queue.size(); i++) {
-            if (!send_queue[i].packet.isResponse() &&
-                //response->getDestination() == address &&
-                response->getDestination() == send_queue[i].packet.getSource() &&
-                response->getSource() == send_queue[i].packet.getDestination()) {
-
-                request = &send_queue[i].packet;
-                return true;
-            }
-        }
-        return false;
-    }
-
-
-    /** @brief Create packet ID from packet.
-     * 
-     * @param packet Packet for which to create ID.
-     * @return The packet ID.
-     */
-    TMPacketID createPacketID(TMPacket<DATA_LEN> *packet) {
-        TMPacketID pid;
-        pid.setSource(packet->getSource());
-        pid.setDestination(packet->getDestination());
-        pid.setSequence(packet->getSequence());
-        pid.setRepeatCount(packet->getRepeatCount());
-        return pid;
-    }
-
-    /** @brief Set specific packet ID to mirror a packet.
-     * 
-     * @param pid Packet ID which to set.
-     * @param packet Packet which to mirror.
-     */
-    void setPacketID(TMPacketID *pid, TMPacket<DATA_LEN> *packet) {
-        pid->setSource(packet->getSource());
-        pid->setDestination(packet->getDestination());
-        pid->setSequence(packet->getSequence());
-        pid->setRepeatCount(packet->getRepeatCount());
-    }
-
     /** @brief Save ID of a packet to pid_list.
      * 
      * @param packet 
@@ -154,21 +111,24 @@ private:
                 
                 //update pid
                 if (pid_list[i].getRepeatCount() < packet->getRepeatCount()) {
-                    setPacketID(&pid_list[i], packet);
+                    pid_list[i].seRepeatCount(packet->getRepeatCount());
                     printf("UPDATE: %03d-%03d:%03d | %03d-%03d:%03d\n", pid_list[i].getSource(), pid_list[i].getDestination(), pid_list[i].getSequence(), packet->getSource(), packet->getDestination(), packet->getSequence());
-                    return 1;
+                    return TMM_PID_UPDATE;
                 }
                 // duplicate
                 printf("DUPLICATE: %03d-%03d:%03d | %03d-%03d:%03d\n", pid_list[i].getSource(), pid_list[i].getDestination(), pid_list[i].getSequence(), packet->getSource(), packet->getDestination(), packet->getSequence());
-                return 2;
+                return TMM_PID_DUPLICATE;
             }
         }
 
         //add new pid
-        setPacketID(&pid_list[pid_index], packet);
+        pid_list[pid_index]setSource(packet->getSource());
+        pid_list[pid_index]setDestination(packet->getDestination());
+        pid_list[pid_index]setSequence(packet->getSequence());
+        pid_list[pid_index]setRepeatCount(packet->getRepeatCount());
         printf("NEW: %03d-%03d:%03d | %03d-%03d:%03d\n", pid_list[pid_index].getSource(), pid_list[pid_index].getDestination(), pid_list[pid_index].getSequence(), packet->getSource(), packet->getDestination(), packet->getSequence());
         pid_index = (pid_index + 1) % PID_SIZE;
-        return 0;
+        return TMM_PID_NEW;
     }
 
 
@@ -178,10 +138,29 @@ private:
      */
     uint8_t classifyPacket() {
         printf("Packet is a ");
-        // response
-        if (packet.isResponse()) {
-            //packet is response to something we have in queue
-            if (isResponse(&packet)) {
+        //requests
+        if (!packet.isResponse()) {
+            if (packet.getDestination() == address) {
+                printf("REQUEST\n");
+                return TMM_RECV_REQUEST;
+            }
+
+            if (packet.isBroadcast()) {
+                printf("FORWARD REQUEST\n");
+                return TMM_RECV_REQUEST | TMM_RECV_FORWARD;
+            }
+
+            printf("FORWARD\n");
+            return TMM_RECV_FORWARD;
+        }
+
+        //go through sent packets and find request
+        for (size_t i = 0; i < send_queue.size(); i++) {
+            if (!send_queue[i].packet.isResponse() &&
+                response->getSource() == send_queue[i].packet.getDestination() &&
+                response->getDestination() == send_queue[i].packet.getSource()) {
+
+                request = &send_queue[i].packet;
                 //a response to some elses packet -> remove request and forward this response
                 if (request->isForwarded()) {
                     request->clear();
@@ -197,45 +176,17 @@ private:
 
                 printf("--------------------------NOT RESPONSE NOR FORWARD--------------------------\n");
             }
-
-            //response to us, but we have no request
-            if (packet.getDestination() == address) {
-                printf("RANDOM RESPONSE\n");
-                return TMM_RECV_RND_RESPONSE;
-            }
-
-            printf("FORWARD\n");
-            return TMM_RECV_FORWARD;
         }
-
-        // request
+        //response to us, but we have no request
         if (packet.getDestination() == address) {
-            printf("REQUEST\n");
-            return TMM_RECV_REQUEST;
-        }
-
-        if (packet.getDestination() == TM_BROADCAST_ADDRESS) {
-            printf("FORWARD REQUEST\n");
-            return TMM_RECV_REQUEST | TMM_RECV_FORWARD;
+            printf("RANDOM RESPONSE\n");
+            return TMM_RECV_RND_RESPONSE;
         }
 
         printf("FORWARD\n");
         return TMM_RECV_FORWARD;
     }
 
-
-    uint8_t handleRequest(TMPacket<DATA_LEN> *request, bool fwd) {
-        printf("Handling request packet\n");
-        if (request->getMessageType() == TM_MSG_PING) {
-            if (fwd)
-                return TMM_OK;
-
-            uint8_t data = request->getData()[0];
-            return queuePacket(request->getSource(), TM_MSG_OK, &data, 1);
-        }
-
-        return requestHandler(request, fwd);
-    }
 
     /** @brief Handle incoming packets*/
     uint8_t receivePacket() {
@@ -258,6 +209,20 @@ private:
     }
 
 
+    uint8_t handleRequest(TMPacket<DATA_LEN> *request, bool fwd) {
+        printf("Handling request packet\n");
+        if (request->getMessageType() == TM_MSG_PING) {
+            if (fwd)
+                return TMM_OK;
+
+            uint8_t data = request->getData()[0];
+            return queuePacket(request->getSource(), TM_MSG_OK, &data, 1);
+        }
+
+        return requestHandler(request, fwd);
+    }
+
+
     void printPacketSimple(TMPacket<DATA_LEN> *packet) {
         printf("%3d %3d %3d ", packet->getSource(), packet->getDestination(), packet->getSequence());
         if (packet->getMessageType() == TM_MSG_OK)
@@ -270,8 +235,6 @@ private:
     }
 
 public:
-    unsigned long toa = 0;
-
     TinyMeshManager(InterfaceWrapperBase *interface) {
         this->interface = interface;
     }
@@ -282,21 +245,21 @@ public:
         this->node_type = node_type;
     }
 
-    inline void registerMillis(unsigned long (*millis)()) {
+    void registerMillis(unsigned long (*millis)()) {
         this->millis = millis;
     }
 
-    inline void registerRequestHandler(uint8_t (*func)(TMPacket<DATA_LEN> *, bool)) {
+    void registerRequestHandler(uint8_t (*func)(TMPacket<DATA_LEN> *, bool)) {
         this->requestHandler = func;
     }
 
-    inline void registerResponseHandler(uint8_t (*func)(TMPacket<DATA_LEN> *, TMPacket<DATA_LEN> *)) {
+    void registerResponseHandler(uint8_t (*func)(TMPacket<DATA_LEN> *, TMPacket<DATA_LEN> *)) {
         this->responseHandler = func;
     }
 
 
     /** @brief Set node address*/
-    inline void setAddress(uint8_t address) {
+    void setAddress(uint8_t address) {
         this->address = address;
     }
 
@@ -308,19 +271,23 @@ public:
     }
 
     /** @brief Get node address*/
-    inline uint8_t getAddress() {
+    uint8_t getAddress() {
         return address;
     }
 
     /** @brief Get node type*/
-    inline uint8_t getNodeType() {
+    uint8_t getNodeType() {
         return node_type;
     }
 
-    /** @brief Get last internal returned value (mostly for debugging)*/
-    inline uint8_t getStatus() {
-        return last_ret;
+    uint8_t begin() {
+        //update time on air for the first time
+        toa = (this->interface->getTimeOnAir(TM_HEADER_LENGTH + DATA_LEN) + 1) * 1.2; //ceiling
+        printf("TOA updated: %ld\n", toa);
+
+        interface->startReception();
     }
+
 
     size_t queueSize() {
         return send_queue.size();
@@ -347,7 +314,7 @@ public:
             send_queue.popBack();
             return TMM_ERR_BUILD_PACKET;
         }
-        request->tts = 0;//toa + (millis() - last_loop_time);
+        request->tts = 0;//toa + (millis() - loop_timer);
         savePacketID(&request->packet);
         printf("Queued packet in %ld\n", request->tts);
         return TMM_OK;
@@ -362,14 +329,8 @@ public:
      */
     uint16_t loop() {
         //save current loop time
-        unsigned long loop_time = millis() - last_loop_time;
-        last_loop_time = millis();
-
-        //update time on air for the first time
-        if (toa == 0) {
-            toa = (this->interface->getTimeOnAir(TM_HEADER_LENGTH + DATA_LEN) + 1) * 1.2; //ceiling
-            printf("TOA updated: %ld\n", toa);
-        }
+        unsigned long loop_time = millis() - loop_timer;
+        loop_timer = millis();
 
         uint16_t ret = receivePacket();
 
@@ -380,7 +341,7 @@ public:
 
             uint8_t pid_type = savePacketID(&packet);
             //not a duplicate packet
-            if (pid_type != 2) {
+            if (pid_type != TMM_PID_DUPLICATE) {
                 //increase ping
                 if (packet.getMessageType() == TM_MSG_PING)
                     packet.getData()[0]++;
@@ -424,11 +385,14 @@ public:
 
         //medium is busy
         if (interface->isMediumBusy()) {
-            wait_for_med = millis();
+            busy_timeout = toa;
             return ret | TMM_MEDIUM_BUSY;
         }
-        if (millis() - wait_for_med <= toa)
+
+        if (busy_timeout > loop_time) {
+            busy_timeout -= loop_time;
             return ret | TMM_MEDIUM_BUSY;
+        }
 
         bool sent = false;
         bool skip = false;

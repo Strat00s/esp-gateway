@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <string.h>
 #include "../helpers.hpp"
+#include "TinyMeshPacket.hpp"
 
 
 //Flag bit locations

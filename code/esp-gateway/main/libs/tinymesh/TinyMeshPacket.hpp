@@ -111,6 +111,7 @@
 template<uint8_t DATA_LEN = 16>
 class TMPacket {
     static_assert(DATA_LEN <= 249, "Packet data length exceeds the maximum allowed limit of 249B");
+
 public:
     uint8_t raw[TM_HEADER_LENGTH + DATA_LEN] = {0};
 
@@ -129,6 +130,7 @@ public:
     void setSequence(uint8_t sequence) {
         raw[TM_SEQUENCE_POS] = sequence;
     }
+
 
     void setRepeatCount(uint8_t repeat) {
         if (repeat > 3)
@@ -152,7 +154,6 @@ public:
         setBits(&raw[TM_FLAGS_POS], is_forwarded, TM_IS_FWD_MSB, TM_IS_FWD_LSB);
     }
 
-
     /** @brief Set entire flag field at once
      *
      * @param flags
@@ -160,6 +161,7 @@ public:
     void setFlags(uint8_t flags) {
         raw[TM_FLAGS_POS] = flags;
     }
+
 
     void setDataLength(uint8_t length) {
         if (length > DATA_LEN)
@@ -201,6 +203,11 @@ public:
         return raw[TM_SEQUENCE_POS];
     }
 
+    bool isBroadcast() {
+        return getMessageType() == TM_BROADCAST_ADDRESS;
+    }
+
+
     uint8_t getRepeatCount() {
         return getBits(raw[TM_FLAGS_POS], TM_RPT_CNT_MSB, TM_RPT_CNT_LSB);
     }
@@ -214,7 +221,7 @@ public:
     }
 
     bool isResponse() {
-        uint8_t msg_type = getBits(raw[TM_FLAGS_POS], TM_MSG_TYPE_MSB, TM_MSG_TYPE_LSB);
+        uint8_t msg_type = getMessageType();
         return msg_type == TM_MSG_OK || msg_type == TM_MSG_ERR;
     }
 
@@ -225,6 +232,7 @@ public:
     uint8_t getFlags() {
         return raw[TM_FLAGS_POS];
     }
+
 
     uint8_t getDataLength() {
         return raw[TM_DATA_LEN_POS];
@@ -289,33 +297,23 @@ public:
     uint8_t buildPacket(uint8_t source, uint8_t destination, uint8_t sequence, uint8_t node_type,
                               uint8_t message_type, uint8_t repeat_cnt, uint8_t *data, uint8_t length) {
 
-        // data are null, but some are to be copied -> don't copy anything
+        //data are null, but some are to be copied -> don't copy anything
         if (data == nullptr && length != 0)
             return TM_ERR_DATA_NULL;
 
         uint8_t ret = TM_OK;
 
-        if (repeat_cnt > 3)
-            repeat_cnt = 3;
-        if (node_type > 3)
-            node_type = 3;
-        if (message_type > 15)
-            message_type = 15;
-
-        // build header
+        //build header
         setVersion(TM_VERSION);
         setSource(source);
         setDestination(destination);
         setSequence(sequence);
-        setFlags(repeat_cnt << 6 | node_type);
-        setMessageType(message_type);
-        setDataLength(length);
-        setIsForwarded(false);
+        setFlags(repeat_cnt << 6 | message_type << 2 | false << 1 | node_type);
 
-        // check if header is valid
+        //check if header is valid
         ret = checkHeader();
 
-        // return now if there are no data to copy
+        //return now if there are no data to copy
         if (!length)
             return ret;
 
@@ -324,6 +322,7 @@ public:
 
         return ret;
     };
+
     /** @brief Check if stored packet has valid header and header data.
      * 
      * @param packet Packet to check
@@ -332,14 +331,14 @@ public:
     uint8_t checkHeader() {
         uint8_t ret = TM_OK;
 
-        // unsuported version
+        //unsuported version
         if (getVersion() != TM_VERSION)
             ret |= TM_ERR_VERSION;
 
         if (getSource() == TM_BROADCAST_ADDRESS || getSource() == getDestination())
             ret |= TM_ERR_ADDRESS;
 
-        // data too long
+        //data too long
         if (getDataLength() > DATA_LEN)
             ret |= TM_ERR_DATA_LEN;
 
