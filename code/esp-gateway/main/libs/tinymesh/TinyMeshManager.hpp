@@ -1,7 +1,8 @@
 #include "TinyMeshPacket.hpp"
 #include "TinyMeshPacketID.hpp"
-#include "../containers/StaticDeque.hpp"
+//#include "../containers/StaticDeque.hpp"
 #include "../interfaces/interfaceWrapperBase.hpp"
+#include "../containers/LinkedList.hpp"
 
 
 #define TMM_OK                0
@@ -42,16 +43,17 @@
 //TODO clear forwarded packets to which we just got answer
 //now they are full new packets
 
+//TODO move from queue to list
 
 
 template<size_t DATA_LEN>
 struct packet_tts_t {
     TMPacket<DATA_LEN> packet;
-    unsigned long tts;
+    uint16_t tts;
 };
 
 
-template <size_t Q_SIZE, size_t PID_SIZE = 10, uint8_t DATA_LEN = 16>
+template <size_t PID_SIZE = 10, uint8_t DATA_LEN = 16>
 class TinyMeshManager {
 private:
     InterfaceWrapperBase *interface = nullptr;
@@ -62,7 +64,8 @@ private:
 
     TMPacket<DATA_LEN> packet; //incoming packet
     TMPacket<DATA_LEN> *request;
-    StaticDeque<packet_tts_t<DATA_LEN>, Q_SIZE> send_queue;
+    linkedList<packet_tts_t<DATA_LEN>> send_list;
+    linkedList<packet_tts_t<DATA_LEN>> response_list;
     unsigned long loop_timer = 0;
     uint16_t busy_timeout = 0;
     uint16_t toa = 0;
@@ -111,7 +114,7 @@ private:
                 
                 //update pid
                 if (pid_list[i].getRepeatCount() < packet->getRepeatCount()) {
-                    pid_list[i].seRepeatCount(packet->getRepeatCount());
+                    pid_list[i].setRepeatCount(packet->getRepeatCount());
                     printf("UPDATE: %03d-%03d:%03d | %03d-%03d:%03d\n", pid_list[i].getSource(), pid_list[i].getDestination(), pid_list[i].getSequence(), packet->getSource(), packet->getDestination(), packet->getSequence());
                     return TMM_PID_UPDATE;
                 }
@@ -122,10 +125,10 @@ private:
         }
 
         //add new pid
-        pid_list[pid_index]setSource(packet->getSource());
-        pid_list[pid_index]setDestination(packet->getDestination());
-        pid_list[pid_index]setSequence(packet->getSequence());
-        pid_list[pid_index]setRepeatCount(packet->getRepeatCount());
+        pid_list[pid_index].setSource(packet->getSource());
+        pid_list[pid_index].setDestination(packet->getDestination());
+        pid_list[pid_index].setSequence(packet->getSequence());
+        pid_list[pid_index].setRepeatCount(packet->getRepeatCount());
         printf("NEW: %03d-%03d:%03d | %03d-%03d:%03d\n", pid_list[pid_index].getSource(), pid_list[pid_index].getDestination(), pid_list[pid_index].getSequence(), packet->getSource(), packet->getDestination(), packet->getSequence());
         pid_index = (pid_index + 1) % PID_SIZE;
         return TMM_PID_NEW;
@@ -155,12 +158,13 @@ private:
         }
 
         //go through sent packets and find request
-        for (size_t i = 0; i < send_queue.size(); i++) {
-            if (!send_queue[i].packet.isResponse() &&
-                response->getSource() == send_queue[i].packet.getDestination() &&
-                response->getDestination() == send_queue[i].packet.getSource()) {
+        for (auto *item = send_list.front(); item != nullptr; item = item->next) {
+            if (!item->data.packet.isResponse() &&
+                packet.getSource() == item->data.packet.getDestination() &&
+                packet.getDestination() == item->data.packet.getSource()) {
 
-                request = &send_queue[i].packet;
+                request = &item->data.packet;
+
                 //a response to some elses packet -> remove request and forward this response
                 if (request->isForwarded()) {
                     request->clear();
@@ -194,12 +198,10 @@ private:
             return TMM_RECV_NO_DATA;
 
         uint8_t len = TM_HEADER_LENGTH + DATA_LEN;
-        last_ret = interface->getData(packet.raw, &len);
-        if (last_ret)
+        if (interface->getData(packet.raw, &len))
             return TMM_ERR_RECV_GET_DATA;
 
-        last_ret = packet.checkHeader();
-        if (last_ret)
+        if (packet.checkHeader())
             return TMM_ERR_RECV_HEADER;
 
         printf("Got new packet: ");
@@ -283,15 +285,16 @@ public:
     uint8_t begin() {
         //update time on air for the first time
         toa = (this->interface->getTimeOnAir(TM_HEADER_LENGTH + DATA_LEN) + 1) * 1.2; //ceiling
-        printf("TOA updated: %ld\n", toa);
+        printf("TOA updated: %d\n", toa);
 
-        interface->startReception();
+        return interface->startReception();
     }
 
 
     size_t queueSize() {
-        return send_queue.size();
+        return send_list.size();
     }
+
 
     /** @brief Queue request to be sent.
      * 
@@ -304,19 +307,18 @@ public:
      * `TMM_ERR_BUILD_PACKET` if failed to build a packet
      */
     uint8_t queuePacket(uint8_t destination, uint8_t message_type, uint8_t *data = nullptr, uint8_t length = 0) {
-        if (send_queue.reserve())
+        if (send_list.reserveBack())
             return TMM_ERR_QUEUE_FULL;
 
-        packet_tts_t<DATA_LEN> *request = send_queue.last();
-        last_ret = request->packet.buildPacket(address, destination, sequence_num++, node_type, message_type, 0, data, length);
-        if (last_ret) {
-            request->packet.clear();
-            send_queue.popBack();
+        auto *request_elem = send_list.back();
+        request_elem->data.packet.clear();
+        if (request_elem->data.packet.buildPacket(address, destination, sequence_num++, node_type, message_type, 0, data, length)) {
+            send_list.popBack();
             return TMM_ERR_BUILD_PACKET;
         }
-        request->tts = 0;//toa + (millis() - loop_timer);
-        savePacketID(&request->packet);
-        printf("Queued packet in %ld\n", request->tts);
+        request_elem->data.tts = 0;//toa + (millis() - loop_timer);
+        savePacketID(&request_elem->data.packet);
+        printf("Queued packet in %d\n", request_elem->data.tts);
         return TMM_OK;
     }
 
@@ -329,7 +331,7 @@ public:
      */
     uint16_t loop() {
         //save current loop time
-        unsigned long loop_time = millis() - loop_timer;
+        uint16_t loop_time = millis() - loop_timer;
         loop_timer = millis();
 
         uint16_t ret = receivePacket();
@@ -368,38 +370,35 @@ public:
                 //forward packet
                 if (packet_type & TMM_RECV_FORWARD) {
                     printf("Handling forward packet\n");
-                    if (send_queue.full())
+                    packet.setIsForwarded(true);
+                    if (send_list.pushBack({packet, uint16_t(loop_time + toa)})) {
+                        printf("Queue is full\n");
                         ret |= TMM_ERR_FWD_QUEUE_FULL;
-                    else {
-                        printf("Queued packet in %ld\n", loop_time + toa + (address % toa));
-                        packet.setIsForwarded(true);
-                        send_queue.pushBack({packet, loop_time + toa});
                     }
+                    else
+                        printf("Queued packet in %d\n", loop_time + toa + (address % toa));
                 }
             }
         }
 
         //nothing to do with empty queue
-        if (send_queue.empty())
+        if (send_list.empty())
             return ret | TMM_SEND_QUEUE_EMPTY;
 
         //medium is busy
-        if (interface->isMediumBusy()) {
+        if (interface->isMediumBusy())
             busy_timeout = toa;
-            return ret | TMM_MEDIUM_BUSY;
-        }
-
         if (busy_timeout > loop_time) {
             busy_timeout -= loop_time;
             return ret | TMM_MEDIUM_BUSY;
         }
+        busy_timeout = 0;
 
         bool sent = false;
-        bool skip = false;
         //go through the queueu
-        for (size_t i = 0; i < send_queue.size(); i++) {
-            packet_tts_t<DATA_LEN> *next = &send_queue[i];
-        
+        for (auto *item = send_list.front(); item != nullptr; item = item->next) {
+            auto *next = &item->data;
+
             //skip empty packets
             if (next->packet.empty())
                 continue;
@@ -448,10 +447,10 @@ public:
         }
 
         //remove stale packets from queue
-        while (!send_queue.empty() && send_queue.first()->packet.empty())
-            send_queue.popFront();
-        while (!send_queue.empty() && send_queue.last()->packet.empty())
-            send_queue.popBack();
+        while (!send_list.empty() && send_list.front()->data.packet.empty())
+            send_list.popFront();
+        while (!send_list.empty() && send_list.back()->data.packet.empty())
+            send_list.popBack();
 
         return ret;
     }
