@@ -116,7 +116,7 @@ spi_device_handle_t dev_handl;
 //interfaces
 sx127xInterfaceWrapper lora434_it(&lora_434);
 sx127xInterfaceWrapper lora868_it(&lora_868);
-TinyMeshManager<10, 20, DATA_LEN> tmm(0, TM_NODE_TYPE_NORMAL, &lora434_it);
+TinyMeshManager<20, DATA_LEN> tmm(0, TM_NODE_TYPE_NORMAL, &lora434_it);
 
 //TinyMeshManager tmm(1, TM_NODE_TYPE_NORMAL, &if_manager);
 
@@ -399,6 +399,11 @@ extern "C" void app_main() {
     tmm.registerRequestHandler(requestHandler);
     tmm.registerResponseHandler(responseHandler);
 
+    if (tmm.begin()) {
+        printf("Failed to start tmm\n");
+        vTaskDelay(1000);
+    }
+
 
     /*----(MAIN LOOP)----*/
     uint16_t last_ret = 0;
@@ -417,18 +422,17 @@ extern "C" void app_main() {
         if (millis() - alive > 5000) {
             alive = millis();
             printf("ALIVE\n");
-            printf("Time on air: %ld\n", tmm.toa);
         }
 
         ret = tmm.loop();
-        //if (ret != last_ret) {
-        //    last_ret = ret;
-        //    printf("Loop: ");
-        //    printLoop(ret);
-        //    printf("Loop: ");
-        //    printBinary(ret, 16);
-        //    printf("\n");
-        //    printf("Queue size: %d\n", tmm.queueSize());
-        //}
+        if (ret != last_ret) {
+            last_ret = ret;
+            printf("Loop: ");
+            printLoop(ret);
+            printf("Loop: ");
+            printBinary(ret, 16);
+            printf("\n");
+            printf("Queue size: %d\n", tmm.queueSize());
+        }
     }
 }

@@ -88,9 +88,7 @@ public:
         return IFW_OK;
     }
 
-    /** @brief Check if interface has any new data, and if so, how many
-     * 
-     */
+    /** @brief Check if interface has any new data, and if so, how many*/
     uint8_t hasData() {
         return lora->readRegister(REG_IRQ_FLAGS) & IRQ_FLAG_RX_DONE ? 1 : 0;
     }

@@ -49,7 +49,8 @@
 template<size_t DATA_LEN>
 struct packet_tts_t {
     TMPacket<DATA_LEN> packet;
-    uint16_t tts;
+    uint16_t tts = 0;   //time to send
+    uint8_t flags = 0;  //0 -> normal, 1 -> keep once after sent, 2 -> remove on tts
 };
 
 
@@ -65,7 +66,7 @@ private:
     TMPacket<DATA_LEN> packet; //incoming packet
     TMPacket<DATA_LEN> *request;
     linkedList<packet_tts_t<DATA_LEN>> send_list;
-    linkedList<packet_tts_t<DATA_LEN>> response_list;
+    //linkedList<packet_tts_t<DATA_LEN>> response_list;
     unsigned long loop_timer = 0;
     uint16_t busy_timeout = 0;
     uint16_t toa = 0;
@@ -211,6 +212,11 @@ private:
     }
 
 
+    /** @brief Handle PING or forward request to user defined handler.
+     * 
+     * @return 0 on success.
+     * 1 on failure.
+     */
     uint8_t handleRequest(TMPacket<DATA_LEN> *request, bool fwd) {
         printf("Handling request packet\n");
         if (request->getMessageType() == TM_MSG_PING) {
@@ -316,13 +322,15 @@ public:
             send_list.popBack();
             return TMM_ERR_BUILD_PACKET;
         }
+
         request_elem->data.tts = 0;//toa + (millis() - loop_timer);
+        request_elem->data.flags = request_elem->data.packet.isResponse();
         savePacketID(&request_elem->data.packet);
         printf("Queued packet in %d\n", request_elem->data.tts);
         return TMM_OK;
     }
 
-    //TODO proper return values for everything
+
     /** @brief Main loop responsible for reading and handling incoming packets and sending queued packets.
      * 
      * @return Returns any of the following macros: `TMM_RECV_NO_DATA`, `TMM_ERR_RECV_HEADER`, `TMM_ERR_RECV_GET_DATA`,
@@ -342,6 +350,7 @@ public:
             ret |= packet_type;
 
             uint8_t pid_type = savePacketID(&packet);
+
             //not a duplicate packet
             if (pid_type != TMM_PID_DUPLICATE) {
                 //increase ping
@@ -351,12 +360,30 @@ public:
                 //handle request
                 //error only if: request AND new packet AND failed to handle request)
                 if (packet_type & TMM_RECV_REQUEST) {
+                    //not an update -> handle reaquest
                     if (!pid_type) {
                         if (handleRequest(&packet, packet_type & TMM_RECV_FORWARD))
                             ret |= TMM_ERR_HANDLE_REQUEST;
                     }
-                    //else
-                        //TODO resend answer only
+                    //update -> resend stored response
+                    else {
+                        bool found = false;
+                        for (auto *item = send_list.front(); item != nullptr; item = item->next) {
+                            auto *response = &item->data.packet;
+                            if (response->empty() || !response->isResponse())
+                                continue;
+                            
+                            if (response->getSource() == packet.getDestination() && response->getDestination() == packet.getSource()) {
+                                item->data.tts = 0;
+                                item->data.flags = 0;
+                                found = true;
+                                break;
+                            }
+                        }
+
+                        if (!found)
+                            printf("RESPONSE NOT FOUND!!!\n");
+                    }
                 }
 
                 //handle response
@@ -403,17 +430,16 @@ public:
             if (next->packet.empty())
                 continue;
 
-            //clear timeouted packets
-            if (!next->packet.isForwarded() && next->packet.getRepeatCount() == 3) {
-                next->packet.clear();
-                printf("Packet TIMEOUT\n");
-                ret |= TMM_SEND_TIMEOUT;
-            }
-
             //update packet timer
             if (next->tts > loop_time) {
                 next->tts -= loop_time;
                 ret |= TMM_SEND_QUEUED;
+                continue;
+            }
+
+            //packet is to removed before being sent
+            if (next->flags == 2) {
+                next->packet.clear();
                 continue;
             }
 
@@ -434,10 +460,25 @@ public:
             ret |= TMM_SENT;
             printf("Packet %03d-%03d:%03d was sent\n", next->packet.getSource(), next->packet.getDestination(), next->packet.getSequence());
 
+            //flags the packet in queue for possible later reuse
+            if (next->flags == 0b00000001) {
+                next->flags =  0b00000010; //will be removed next time before being sent
+                next->tts = TIMEOUT * 3 * 2; //timeout * repeat * 2
+                continue;
+            }
+
             //clear responses or forwared packets as they are to be sent only once
-            if (next->packet.isResponse() || next->packet.isForwarded()) {
+            if (next->packet.isForwarded()) {
                 next->packet.clear();
                 printf("Removed forward and responses\n");
+                continue;
+            }
+
+            //clear timed out packets
+            if (!next->packet.isForwarded() && next->packet.getRepeatCount() == 3) {
+                next->packet.clear();
+                printf("Packet TIMEOUT\n");
+                ret |= TMM_SEND_TIMEOUT;
                 continue;
             }
 
