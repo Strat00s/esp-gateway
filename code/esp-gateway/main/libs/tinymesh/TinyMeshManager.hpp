@@ -325,6 +325,8 @@ public:
 
         request_elem->data.tts = 0;//toa + (millis() - loop_timer);
         request_elem->data.flags = request_elem->data.packet.isResponse();
+        if (request_elem->data.packet.isResponse()) 
+            request_elem->data.tts = TIMEOUT * 2;
         savePacketID(&request_elem->data.packet);
         printf("Queued packet in %d\n", request_elem->data.tts);
         return TMM_OK;
@@ -375,8 +377,9 @@ public:
                             
                             if (response->getSource() == packet.getDestination() && response->getDestination() == packet.getSource()) {
                                 item->data.tts = 0;
-                                item->data.flags = 0;
+                                item->data.flags = 0b00000001;
                                 found = true;
+                                printf("FOUND OLD RESPONSE\n");
                                 break;
                             }
                         }
@@ -449,6 +452,8 @@ public:
                     next->tts = toa;
                 continue;
             }
+
+            printf("TYPE: %s\n", next->packet.isResponse() ? "RESPONSE" : "REQUEST");
 
             //send the packet
             if (interface->sendData(next->packet.raw, next->packet.size())) {
